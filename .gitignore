@@ -1,0 +1,91 @@
+# ==================================================
+# DeepGuard AI - Global .gitignore
+# ==================================================
+
+# ---------- Python ----------
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# ---------- Virtual Environments ----------
+.venv/
+venv/
+env/
+
+# ---------- Environment Variables ----------
+.env
+.env.*
+!.env.example
+
+# ---------- Logs ----------
+logs/
+*.log
+
+# ---------- Runtime Data ----------
+uploads/
+app/uploads/
+app/logs/
+
+# ---------- HuggingFace / Models ----------
+.cache/
+.cache/huggingface/
+model_cache/
+*.pt
+*.pth
+*.onnx
+*.bin
+*.safetensors
+
+# ---------- Google ADK ----------
+.adk/
+.saved_chats/
+.persist_vector_store/
+
+# ---------- Node ----------
+node_modules/
+dist/
+build/
+coverage/
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ---------- React ----------
+frontend/dist/
+frontend/node_modules/
+
+# ---------- IDE ----------
+.vscode/
+.idea/
+*.iml
+
+# ---------- OS ----------
+.DS_Store
+Thumbs.db
+
+# ---------- Deployment ----------
+.terraform/
+*.tfstate
+
+# ---------- Docker ----------
+docker-compose.override.yml
+
+# ---------- Temporary ----------
+*.tmp
+*.bak
+*.swp
+
+# ---------- Keep Important Files ----------
+!.env.example
+!requirements.txt
+!pyproject.toml
+!package.json
+!package-lock.json
+!README.md
+!LICENSE

@@ -1,0 +1,53 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;750;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+}
+
+body {
+  font-family: var(--font-sans);
+  background-color: #030712;
+  color: #f3f4f6;
+  overflow-x: hidden;
+}
+
+/* Custom scrolling rules matching cyberspace look */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #020617;
+}
+::-webkit-scrollbar-thumb {
+  background: #1e293b;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #0ea5e9;
+}
+
+/* Glitch animation utility */
+@keyframes scanning {
+  0% { transform: translateY(-100%); }
+  100% { transform: translateY(200%); }
+}
+
+.glitch-scan {
+  animation: scanning 2.5s infinite linear;
+}
+
+.glow-cyan {
+  box-shadow: 0 0 25px rgba(34, 211, 238, 0.15);
+}
+
+.glow-red {
+  box-shadow: 0 0 25px rgba(239, 68, 68, 0.15);
+}
+
+/* Base custom interactive effects */
+.transition-all-300 {
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
