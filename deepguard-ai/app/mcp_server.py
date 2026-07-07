@@ -1,6 +1,7 @@
 from fastmcp import FastMCP
 
 from app.forensics import analyze_ela, analyze_frames, compute_hash, extract_exif
+from app.ml_models import run_ml_ensemble
 
 # Initialize the MCP server with a descriptive name
 mcp = FastMCP("DeepGuard Forensics MCP Server")
@@ -31,6 +32,12 @@ def analyze_frames_tool_func(file_path: str) -> dict:
     """
     return analyze_frames(file_path)
 
+def run_ml_ensemble_tool_func(file_path: str) -> dict:
+    """MCP tool: run ML ensemble on the file.
+    Returns a dict with final_confidence and verdict.
+    """
+    return run_ml_ensemble(file_path)
+
 # Register the tools with the server using the required names
 @mcp.tool(name="perform_ela")
 def perform_ela_tool(file_path: str) -> dict:
@@ -47,6 +54,10 @@ def compute_hash_tool(file_path: str) -> dict:
 @mcp.tool(name="analyze_frames")
 def analyze_frames_tool(file_path: str) -> dict:
     return analyze_frames_tool_func(file_path)
+
+@mcp.tool(name="run_ml_ensemble")
+def run_ml_ensemble_tool(file_path: str) -> dict:
+    return run_ml_ensemble_tool_func(file_path)
 
 # Entry point - run the MCP server when executed directly.
 if __name__ == "__main__":

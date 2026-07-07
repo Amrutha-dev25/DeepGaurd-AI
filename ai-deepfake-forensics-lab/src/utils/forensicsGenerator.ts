@@ -44,12 +44,13 @@ export async function generateCustomReport(
     `Frames: ${data.frames?.summary || 'N/A'} — Brightness: ${data.frames?.average_brightness?.toFixed(2) || 'N/A'}`,
   ];
 
-  const hasManipulation = data.ela?.summary?.toLowerCase().includes('manipulation') ||
-    data.ela?.diff_bbox !== null;
-
-  const suspectClass: 'Real' | 'Fake' = hasManipulation ? 'Fake' : 'Real';
-  const confidence = hasManipulation ? 78 : 91;
-  const risk = hasManipulation ? 'High' : 'Low';
+  const isFake = data.verdict === 'fake' || data.verdict === 'suspicious';
+  const suspectClass: 'Real' | 'Fake' = isFake ? 'Fake' : 'Real';
+  
+  // Use ML ensemble confidence if available, else fallback to rule-based
+  const ml_confidence = data.ml_ensemble?.confidence_percent;
+  const confidence = ml_confidence !== undefined ? ml_confidence : (isFake ? 78 : 91);
+  const risk = isFake ? 'High' : 'Low';
 
   const overlays: AnalysisOverlay[] = data.ela?.diff_bbox ? [
     {
@@ -79,7 +80,7 @@ export async function generateCustomReport(
     explanation: data.verdict || 'Forensic analysis complete. See findings for details.',
     checkCirculating: recommendations,
     url,
-    category: hasManipulation ? 'Suspected Manipulation' : 'Authentic Record',
+    category: isFake ? 'Suspected Manipulation' : 'Authentic Record',
     overlays,
   };
 }

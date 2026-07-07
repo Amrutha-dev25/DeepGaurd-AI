@@ -1,0 +1,58 @@
+{
+  "ela": {
+    "summary": "Potential manipulation detected",
+    "diff_bbox": [
+      0,
+      0,
+      420,
+      420
+    ]
+  },
+  "exif": {
+    "summary": "Extracted 0 EXIF tags",
+    "exif": {}
+  },
+  "hash": {
+    "sha256": "4d480e72fadac08c902f507662570af2e9f5bc55dfbbbdf5ee659b37f8c6936c",
+    "phash": "ac9ac19fc3942c73"
+  },
+  "frames": {
+    "summary": "Single image analyzed",
+    "frame_count": 1,
+    "average_brightness": 178.53100907029477
+  },
+  "ml_ensemble": {
+    "fake_probability": 0.262,
+    "confidence_percent": 26.2,
+    "verdict": "real",
+    "model_results": {
+      "huggingface": {
+        "confidence": 0.13593311607837677,
+        "signal": "Deepfake classifier probability: 13.59%",
+        "model": "huggingface"
+      },
+      "frequency": {
+        "confidence": 0.4004055968236546,
+        "signal": "DCT frequency GAN artifact score: 40.04%",
+        "model": "frequency"
+      },
+      "face": {
+        "confidence": 0.3,
+        "signal": "No face detected in image",
+        "model": "face"
+      },
+      "temporal": {
+        "confidence": 0.5,
+        "signal": "Temporal analysis not applicable to single images.",
+        "model": "temporal",
+        "skipped": true
+      }
+    },
+    "weights_used": {
+      "huggingface": 0.4118,
+      "frequency": 0.2941,
+      "face": 0.2941
+    },
+    "is_video": false
+  }
+}

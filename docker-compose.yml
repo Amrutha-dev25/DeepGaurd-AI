@@ -1,0 +1,30 @@
+version: '3.8'
+
+services:
+  backend:
+    build: 
+      context: ./deepguard-ai
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+      - "8090:8090"
+    environment:
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - GOOGLE_GENAI_USE_VERTEXAI=${GOOGLE_GENAI_USE_VERTEXAI:-False}
+      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.5-flash}
+    volumes:
+      - ./deepguard-ai/app/uploads:/app/app/uploads
+      - ./deepguard-ai/app/logs:/app/app/logs
+
+  frontend:
+    image: node:20-alpine
+    working_dir: /app
+    volumes:
+      - ./ai-deepfake-forensics-lab:/app
+    ports:
+      - "5173:5173"
+      - "3000:3000"
+    command: >
+      sh -c "npm install && npm run dev -- --host 0.0.0.0"
+    depends_on:
+      - backend

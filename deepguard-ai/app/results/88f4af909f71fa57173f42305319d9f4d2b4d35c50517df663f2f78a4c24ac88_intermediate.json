@@ -1,0 +1,148 @@
+{
+  "ela": {
+    "measurements": {
+      "mean_difference": 0.5964,
+      "max_difference": 25.0,
+      "diff_bbox": [
+        127,
+        0,
+        535,
+        483
+      ]
+    },
+    "confidence": 0.4,
+    "evidence": "Compression level differences are uniform.",
+    "summary": "Compression level differences are uniform.",
+    "diff_bbox": [
+      127,
+      0,
+      535,
+      483
+    ],
+    "status": "success",
+    "execution_time": 0.0572
+  },
+  "exif": {
+    "measurements": {
+      "tag_count": 0,
+      "software_modified": false
+    },
+    "confidence": 0.5,
+    "evidence": "Extracted 0 EXIF tags.",
+    "exif": {},
+    "status": "success",
+    "execution_time": 0.0018
+  },
+  "hash": {
+    "measurements": {
+      "sha256": "88f4af909f71fa57173f42305319d9f4d2b4d35c50517df663f2f78a4c24ac88",
+      "phash": "e96b26a5b4a63652"
+    },
+    "confidence": 1.0,
+    "evidence": "SHA-256: 88f4af909f71fa57173f42305319d9f4d2b4d35c50517df663f2f78a4c24ac88. Perceptual Hash: e96b26a5b4a63652",
+    "sha256": "88f4af909f71fa57173f42305319d9f4d2b4d35c50517df663f2f78a4c24ac88",
+    "phash": "e96b26a5b4a63652",
+    "status": "success",
+    "execution_time": 1.421
+  },
+  "frames": {
+    "summary": "Single image analyzed",
+    "frame_count": 1,
+    "average_brightness": 213.52286139974072,
+    "measurements": {
+      "frame_count": 1,
+      "average_brightness": 213.52286139974072
+    },
+    "confidence": 0.8,
+    "evidence": "Image brightness average is 213.52.",
+    "status": "success",
+    "execution_time": 0.0183
+  },
+  "ml_ensemble": {
+    "fake_probability": 0.3909,
+    "confidence_percent": 39.1,
+    "verdict": "real",
+    "model_results": {
+      "huggingface": {
+        "confidence": 0.5746346712112427,
+        "signal": "Deepfake classifier probability: 57.46%",
+        "model": "huggingface"
+      },
+      "frequency": {
+        "confidence": 0.22454600995451243,
+        "signal": "DCT frequency GAN artifact score: 22.45%",
+        "model": "frequency"
+      },
+      "face": {
+        "confidence": 0.3,
+        "signal": "No face detected in image",
+        "model": "face"
+      },
+      "temporal": {
+        "confidence": 0.5,
+        "signal": "Temporal analysis not applicable to single images.",
+        "model": "temporal",
+        "skipped": true
+      }
+    },
+    "weights_used": {
+      "huggingface": 0.4118,
+      "frequency": 0.2941,
+      "face": 0.2941
+    },
+    "is_video": false
+  },
+  "noise": {
+    "measurements": {
+      "noise_variance": 54.98
+    },
+    "confidence": 0.7,
+    "evidence": "Noise variance (Laplacian) is 54.98.",
+    "status": "success",
+    "execution_time": 0.03
+  },
+  "jpeg_artifacts": {
+    "measurements": {
+      "block_boundary_ratio": 1.0155
+    },
+    "confidence": 0.65,
+    "evidence": "Block grid boundary difference ratio is 1.015.",
+    "status": "success",
+    "execution_time": 0.0239
+  },
+  "clones": {
+    "measurements": {
+      "clone_matches_count": 0
+    },
+    "confidence": 0.5,
+    "evidence": "No significant duplicate regions detected.",
+    "status": "success",
+    "execution_time": 2.1476
+  },
+  "faces": {
+    "measurements": {
+      "face_count": 1,
+      "faces_bbox": [
+        [
+          100,
+          61,
+          258,
+          258
+        ]
+      ]
+    },
+    "confidence": 0.9,
+    "evidence": "Detected 1 faces in the media frame.",
+    "status": "success",
+    "execution_time": 0.0747
+  },
+  "compression": {
+    "measurements": {
+      "quality_factor": 90
+    },
+    "confidence": 0.8,
+    "evidence": "Estimated compression/quality factor: 90%.",
+    "status": "success",
+    "execution_time": 0.0005
+  }
+}

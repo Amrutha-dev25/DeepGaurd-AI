@@ -1,0 +1,137 @@
+{
+  "results": {
+    "ela": {
+      "summary": "Potential manipulation detected",
+      "diff_bbox": [
+        0,
+        0,
+        156,
+        937
+      ]
+    },
+    "exif": {
+      "summary": "Extracted 0 EXIF tags",
+      "exif": {}
+    },
+    "hash": {
+      "sha256": "74b61f4d27005dfa623185732e6ad6295211f6692d4ba10096e13eff45f1cf2d",
+      "phash": "8f68631df3996164"
+    },
+    "frames": {
+      "summary": "Single image analyzed",
+      "frame_count": 1,
+      "average_brightness": 34.48362887557124
+    },
+    "ml_ensemble": {
+      "fake_probability": 0.3544,
+      "confidence_percent": 35.4,
+      "verdict": "real",
+      "model_results": {
+        "huggingface": {
+          "confidence": 0.5289964079856873,
+          "signal": "Deepfake classifier probability: 52.90%",
+          "model": "huggingface"
+        },
+        "frequency": {
+          "confidence": 0.16437575384956568,
+          "signal": "DCT frequency GAN artifact score: 16.44%",
+          "model": "frequency"
+        },
+        "face": {
+          "confidence": 0.3,
+          "signal": "No face detected in image",
+          "model": "face"
+        },
+        "temporal": {
+          "confidence": 0.5,
+          "signal": "Temporal analysis not applicable to single images.",
+          "model": "temporal",
+          "skipped": true
+        }
+      },
+      "weights_used": {
+        "huggingface": 0.4118,
+        "frequency": 0.2941,
+        "face": 0.2941
+      },
+      "is_video": false
+    }
+  },
+  "report_text": "DeepGuard AI Forensic Report\n================================\nGenerated on: 2026-07-06T01:55:52.389619+00:00\n\n=== Analysis Summary ===\nELA     : Potential manipulation detected\nEXIF    : Extracted 0 EXIF tags\nSHA-256 : 74b61f4d27005dfa623185732e6ad6295211f6692d4ba10096e13eff45f1cf2d\nFrames  : Single image analyzed\nVerdict : real\n\n=== Recommendations ===\n- ELA detected pixel-level inconsistencies. Cross-reference with original.\n- No EXIF metadata found. Metadata may have been stripped.\n- Only one frame analyzed. Upload a longer video clip for more thorough analysis.",
+  "report_json": {
+    "timestamp": "2026-07-06T01:55:52.389658+00:00",
+    "results": {
+      "ela": {
+        "summary": "Potential manipulation detected",
+        "diff_bbox": [
+          0,
+          0,
+          156,
+          937
+        ]
+      },
+      "exif": {
+        "summary": "Extracted 0 EXIF tags",
+        "exif": {}
+      },
+      "hash": {
+        "sha256": "74b61f4d27005dfa623185732e6ad6295211f6692d4ba10096e13eff45f1cf2d",
+        "phash": "8f68631df3996164"
+      },
+      "frames": {
+        "summary": "Single image analyzed",
+        "frame_count": 1,
+        "average_brightness": 34.48362887557124
+      },
+      "ml_ensemble": {
+        "fake_probability": 0.3544,
+        "confidence_percent": 35.4,
+        "verdict": "real",
+        "model_results": {
+          "huggingface": {
+            "confidence": 0.5289964079856873,
+            "signal": "Deepfake classifier probability: 52.90%",
+            "model": "huggingface"
+          },
+          "frequency": {
+            "confidence": 0.16437575384956568,
+            "signal": "DCT frequency GAN artifact score: 16.44%",
+            "model": "frequency"
+          },
+          "face": {
+            "confidence": 0.3,
+            "signal": "No face detected in image",
+            "model": "face"
+          },
+          "temporal": {
+            "confidence": 0.5,
+            "signal": "Temporal analysis not applicable to single images.",
+            "model": "temporal",
+            "skipped": true
+          }
+        },
+        "weights_used": {
+          "huggingface": 0.4118,
+          "frequency": 0.2941,
+          "face": 0.2941
+        },
+        "is_video": false
+      }
+    },
+    "verdict": "real",
+    "recommendations": [
+      "ELA detected pixel-level inconsistencies. Cross-reference with original.",
+      "No EXIF metadata found. Metadata may have been stripped.",
+      "Only one frame analyzed. Upload a longer video clip for more thorough analysis."
+    ]
+  },
+  "agent_logs": [
+    {
+      "agent": "deepguard_coordinator",
+      "tool": "error",
+      "result": "\nOn how to mitigate this issue, please refer to:\n\nhttps://google.github.io/adk-docs/agents/models/google-gemini/#error-code-429-resource_exhausted\n\n\n429 RESOURCE_EXHAUSTED. {'error': {'code': 429, 'message': 'You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. To monitor your current usage, head to: https://ai.dev/rate-limit. \\n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20, model: gemini-2.5-flash\\nPlease retry in 10.632657915s.', 'status': 'RESOURCE_EXHAUSTED', 'details': [{'@type': 'type.googleapis.com/google.rpc.Help', 'links': [{'description': 'Learn more about Gemini API quotas', 'url': 'https://ai.google.dev/gemini-api/docs/rate-limits'}]}, {'@type': 'type.googleapis.com/google.rpc.QuotaFailure', 'violations': [{'quotaMetric': 'generativelanguage.googleapis.com/generate_content_free_tier_requests', 'quotaId': 'GenerateRequestsPerDayPerProjectPerModel-FreeTier', 'quotaDimensions': {'location': 'global', 'model': 'gemini-2.5-flash'}, 'quotaValue': '20'}]}, {'@type': 'type.googleapis.com/google.rpc.RetryInfo', 'retryDelay': '10s'}]}}",
+      "timestamp": "2026-07-06T01:55:51.402826+00:00"
+    }
+  ],
+  "activity_log_path": "C:\\Users\\AMRUTHA KATTIMANI\\OneDrive\\Desktop\\adk-workspace\\deepguard-ai\\app\\logs\\activity_log.json"
+}

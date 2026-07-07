@@ -1,349 +1,443 @@
-# ruff: noqa
 """
-ml_models.py — ML Ensemble Deepfake Detection for DeepGuard AI
-===============================================================
+DeepGuard AI — ML Ensemble Detection Layer
 
-This module provides a resilient, multi-model ensemble for deepfake and
-media authenticity detection.  Each detector is wrapped in its own
-try/except so that a missing GPU, unavailable model weight, or optional
-dependency does NOT crash the entire pipeline — the detector simply
-contributes a neutral 0.5 score and records an error note.
+Contains 4 independent detectors:
+  A. HuggingFace deepfake classifier (general)
+  B. DCT Frequency analysis (GAN fingerprint detection)
+  C. DeepFace face consistency checker (face swap detection)
+  D. Temporal consistency checker (video only)
 
-Exported symbol:
-    run_ensemble(file_path: str) -> dict
+And one ensemble verdict engine that combines all results
+using weighted averaging to produce a final real probability.
 """
 
-from __future__ import annotations
-
-import io
 import os
+import cv2
+import gc
+import numpy as np
 from pathlib import Path
 from typing import Any
+import logging
 
-import cv2
-import numpy as np
+logger = logging.getLogger(__name__)
 
-# Optional heavy deps — imported lazily so the module loads even when they
-# are unavailable (e.g., in a lightweight test environment).
-try:
-    from PIL import Image as _PILImage
-    _PIL_OK = True
-except ImportError:
-    _PIL_OK = False
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Internal helpers
-# ─────────────────────────────────────────────────────────────────────────────
+_VIDEO_EXTENSIONS = {".mp4", ".webm", ".mov", ".avi"}
+_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 
-_VIDEO_EXTS = {".mp4", ".webm", ".mov", ".avi"}
-_IMAGE_EXTS = {".jpg", ".jpeg", ".png"}
+# Ensemble weights — must sum to 1.0
+_WEIGHTS = {
+    "huggingface": 0.35,
+    "frequency":   0.25,
+    "face":        0.25,
+    "temporal":    0.15,
+}
 
+# Verdict thresholds
+_THRESHOLD_FAKE       = 0.65
+_THRESHOLD_SUSPICIOUS = 0.40
 
-def _is_video(path: str) -> bool:
-    return Path(path).suffix.lower() in _VIDEO_EXTS
+# ---------------------------------------------------------------------------
+# Helper: extract frames from video
+# ---------------------------------------------------------------------------
 
-
-def _load_image_array(file_path: str) -> np.ndarray | None:
-    """Return a BGR ndarray for images; first frame for videos. None on failure."""
-    if _is_video(file_path):
-        cap = cv2.VideoCapture(file_path)
-        ret, frame = cap.read()
+def _extract_frames(file_path: str, max_frames: int = 10) -> list[np.ndarray]:
+    """Extract up to max_frames evenly spaced frames from a video."""
+    cap = cv2.VideoCapture(file_path)
+    if not cap.isOpened():
+        return []
+    total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    if total <= 0:
         cap.release()
-        return frame if ret else None
-    img = cv2.imread(file_path)
-    return img
+        return []
+    indices = np.linspace(0, total - 1, min(max_frames, total), dtype=int)
+    frames = []
+    for idx in indices:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, int(idx))
+        ret, frame = cap.read()
+        if ret and frame is not None:
+            frames.append(frame)
+    cap.release()
+    return frames
 
 
-def _array_to_pil(arr: np.ndarray):
-    """Convert BGR ndarray to PIL RGB Image."""
-    if not _PIL_OK:
-        return None
-    rgb = cv2.cvtColor(arr, cv2.COLOR_BGR2RGB)
-    return _PILImage.fromarray(rgb)
+def _load_image(file_path: str) -> np.ndarray | None:
+    """Load an image as a numpy array."""
+    return cv2.imread(file_path)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Individual detectors
-# Each returns a float in [0.0, 1.0] where 1.0 = "definitely deepfake"
-# ─────────────────────────────────────────────────────────────────────────────
+def _is_video(file_path: str) -> bool:
+    return Path(file_path).suffix.lower() in _VIDEO_EXTENSIONS
 
 
-def _detect_ela_score(file_path: str) -> tuple[float, str | None]:
-    """
-    ELA-based detector: re-compress at low quality and measure normalised diff.
-    A larger diff → higher manipulation probability.
-    """
+# ---------------------------------------------------------------------------
+# MODEL A — HuggingFace Deepfake Classifier
+# ---------------------------------------------------------------------------
+
+_hf_pipeline = None
+
+def _get_hf_pipeline():
+    """Lazy-load the HuggingFace pipeline once with CPU fallback and reuse it."""
+    global _hf_pipeline
+    if _hf_pipeline is None:
+        try:
+            import torch
+            from transformers import pipeline
+            device = 0 if torch.cuda.is_available() else -1
+            try:
+                _hf_pipeline = pipeline(
+                    "image-classification",
+                    model="prithivMLmods/Deep-Fake-Detector-v2-Model",
+                    device=device,
+                )
+            except Exception as e:
+                logger.warning(f"Could not load HuggingFace model on device {device}: {e}. Retrying on CPU.")
+                _hf_pipeline = pipeline(
+                    "image-classification",
+                    model="prithivMLmods/Deep-Fake-Detector-v2-Model",
+                    device=-1,
+                )
+        except Exception as e:
+            logger.error(f"Failed to load HuggingFace model: {e}")
+            _hf_pipeline = None
+    return _hf_pipeline
+
+
+def _hf_score_frame(frame_bgr: np.ndarray) -> float:
+    """Score a single frame. Returns probability of being fake (0.0-1.0)."""
+    pipe = _get_hf_pipeline()
+    if pipe is None:
+        raise RuntimeError("HuggingFace model pipeline is unavailable.")
+
+    from PIL import Image
+    frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+    pil_img = Image.fromarray(frame_rgb)
+    results = pipe(pil_img)
+    # Find the fake label score
+    for r in results:
+        label = r["label"].lower()
+        if "fake" in label or "deepfake" in label or "manipulated" in label:
+            return float(r["score"])
+    # If no fake label found, return 1 - real score
+    for r in results:
+        label = r["label"].lower()
+        if "real" in label or "authentic" in label:
+            return 1.0 - float(r["score"])
+    return 0.5
+
+
+def detect_huggingface(file_path: str) -> dict[str, Any]:
+    """Run HuggingFace deepfake classifier."""
     try:
-        arr = _load_image_array(file_path)
-        if arr is None:
-            return 0.5, "could not load image"
-        if not _PIL_OK:
-            return 0.5, "Pillow not available"
-        pil = _array_to_pil(arr)
-        buf = io.BytesIO()
-        pil.save(buf, format="JPEG", quality=75)
-        buf.seek(0)
-        compressed = _PILImage.open(buf).convert("RGB")
-        orig_arr = np.array(pil, dtype=np.float32)
-        comp_arr = np.array(compressed, dtype=np.float32)
-        diff = np.abs(orig_arr - comp_arr)
-        # Normalise: max possible diff per channel = 255
-        score = float(np.mean(diff) / 255.0)
-        # Clamp to [0, 1] and scale to make moderate diffs more visible
-        score = min(1.0, score * 10.0)
-        return score, None
-    except Exception as exc:
-        return 0.5, str(exc)
+        if _is_video(file_path):
+            frames = _extract_frames(file_path, max_frames=5)
+            if not frames:
+                return {"confidence": 0.5, "signal": "Could not extract video frames", "model": "huggingface", "disabled": True}
+            scores = [_hf_score_frame(f) for f in frames]
+            avg_score = float(np.mean(scores))
+            return {
+                "confidence": avg_score,
+                "signal": f"Analyzed {len(frames)} frames. Average fake probability: {avg_score:.2%}",
+                "model": "huggingface",
+                "frame_scores": [round(s, 3) for s in scores],
+            }
+        else:
+            img = _load_image(file_path)
+            if img is None:
+                return {"confidence": 0.5, "signal": "Could not load image", "model": "huggingface", "disabled": True}
+            score = _hf_score_frame(img)
+            return {
+                "confidence": score,
+                "signal": f"Deepfake classifier probability: {score:.2%}",
+                "model": "huggingface",
+            }
+    except Exception as e:
+        logger.warning(f"HuggingFace detection disabled: {e}")
+        return {"confidence": 0.5, "signal": f"HuggingFace model disabled: {str(e)}", "model": "huggingface", "disabled": True}
 
 
-def _detect_frequency_anomaly(file_path: str) -> tuple[float, str | None]:
-    """
-    DCT/FFT frequency-domain detector.
-    GAN-generated images often have characteristic high-frequency artefacts.
-    """
+# ---------------------------------------------------------------------------
+# MODEL B — DCT Frequency Analysis (GAN Fingerprint Detection)
+# ---------------------------------------------------------------------------
+
+def _dct_fake_score(frame_bgr: np.ndarray) -> float:
+    """Compute a GAN detection score using DCT frequency analysis."""
+    gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY).astype(np.float32)
+    gray = cv2.resize(gray, (256, 256))
+    dct = cv2.dct(gray)
+    dct_abs = np.abs(dct)
+    dct_norm = dct_abs / (dct_abs.max() + 1e-8)
+
+    h, w = dct_norm.shape
+    low_freq  = dct_norm[:h//4,  :w//4]
+    mid_freq  = dct_norm[h//4:h//2, w//4:w//2]
+    high_freq = dct_norm[h//2:,  w//2:]
+
+    mid_energy  = float(mid_freq.mean())
+    high_energy = float(high_freq.mean())
+
+    ratio = high_energy / (mid_energy + 1e-8)
+    high_variance = float(np.var(high_freq))
+
+    ratio_score = min(ratio / 0.8, 1.0)
+    variance_score = min(high_variance * 50, 1.0)
+
+    final_score = (ratio_score * 0.7) + (variance_score * 0.3)
+    return float(np.clip(final_score, 0.0, 1.0))
+
+
+def detect_frequency(file_path: str) -> dict[str, Any]:
+    """Run DCT frequency analysis to detect GAN fingerprints."""
     try:
-        arr = _load_image_array(file_path)
-        if arr is None:
-            return 0.5, "could not load image"
-        gray = cv2.cvtColor(arr, cv2.COLOR_BGR2GRAY).astype(np.float32)
-        # 2D FFT magnitude spectrum
-        fft = np.fft.fft2(gray)
-        fft_shift = np.fft.fftshift(fft)
-        magnitude = np.abs(fft_shift)
-        # Compare high-frequency energy to low-frequency energy
-        h, w = magnitude.shape
-        cy, cx = h // 2, w // 2
-        radius = min(h, w) // 8
-        y, x = np.ogrid[:h, :w]
-        mask_low = (y - cy) ** 2 + (x - cx) ** 2 <= radius ** 2
-        low_energy = float(magnitude[mask_low].mean())
-        high_energy = float(magnitude[~mask_low].mean())
-        if low_energy == 0:
-            return 0.5, "zero low-frequency energy"
-        ratio = high_energy / (low_energy + 1e-9)
-        # Typical natural images: ratio ~ 0.1–0.5; GAN images often > 0.6
-        score = min(1.0, ratio / 1.2)
-        return score, None
-    except Exception as exc:
-        return 0.5, str(exc)
+        if _is_video(file_path):
+            frames = _extract_frames(file_path, max_frames=5)
+            if not frames:
+                return {"confidence": 0.5, "signal": "Could not extract frames", "model": "frequency", "disabled": True}
+            scores = [_dct_fake_score(f) for f in frames]
+            avg_score = float(np.mean(scores))
+            return {
+                "confidence": avg_score,
+                "signal": f"Frequency analysis across {len(frames)} frames. GAN artifact score: {avg_score:.2%}",
+                "model": "frequency",
+            }
+        else:
+            img = _load_image(file_path)
+            if img is None:
+                return {"confidence": 0.5, "signal": "Could not load image", "model": "frequency", "disabled": True}
+            score = _dct_fake_score(img)
+            return {
+                "confidence": score,
+                "signal": f"DCT frequency GAN artifact score: {score:.2%}",
+                "model": "frequency",
+            }
+    except Exception as e:
+        return {"confidence": 0.5, "signal": f"Error: {str(e)}", "model": "frequency", "disabled": True}
 
 
-def _detect_noise_inconsistency(file_path: str) -> tuple[float, str | None]:
-    """
-    Noise pattern inconsistency detector.
-    Splice edits and GAN faces often have localised noise variance mismatches.
-    """
+# ---------------------------------------------------------------------------
+# MODEL C — DeepFace Face Consistency Checker
+# ---------------------------------------------------------------------------
+
+def _analyze_face_frame(frame_bgr: np.ndarray) -> dict[str, Any]:
+    """Analyze facial landmarks and geometry in a single frame using DeepFace."""
     try:
-        arr = _load_image_array(file_path)
-        if arr is None:
-            return 0.5, "could not load image"
-        gray = cv2.cvtColor(arr, cv2.COLOR_BGR2GRAY).astype(np.float32)
-        # Local variance map using a sliding window via integral images
-        blur = cv2.GaussianBlur(gray, (7, 7), 0)
-        residual = gray - blur
-        h, w = residual.shape
-        # Divide into 4×4 blocks and measure variance per block
-        block_h, block_w = max(1, h // 4), max(1, w // 4)
-        variances = []
-        for row in range(4):
-            for col in range(4):
-                patch = residual[
-                    row * block_h:(row + 1) * block_h,
-                    col * block_w:(col + 1) * block_w,
-                ]
-                variances.append(float(np.var(patch)))
-        if not variances:
-            return 0.5, "no patches"
-        var_array = np.array(variances)
-        # Coefficient of variation of block variances
-        mean_var = float(var_array.mean())
-        std_var = float(var_array.std())
-        cv = std_var / (mean_var + 1e-9)
-        # High CV → inconsistent noise → suspicious
-        score = min(1.0, cv / 3.0)
-        return score, None
-    except Exception as exc:
-        return 0.5, str(exc)
-
-
-def _detect_face_asymmetry(file_path: str) -> tuple[float, str | None]:
-    """
-    Facial symmetry detector using OpenCV Haar cascade.
-    Many deepfakes exhibit unnatural facial asymmetry.
-    Falls back to neutral score if no face is detected.
-    """
-    try:
-        arr = _load_image_array(file_path)
-        if arr is None:
-            return 0.5, "could not load image"
-        gray = cv2.cvtColor(arr, cv2.COLOR_BGR2GRAY)
-        cascade_path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
-        cascade = cv2.CascadeClassifier(cascade_path)
-        faces = cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30))
-        if len(faces) == 0:
-            return 0.5, "no face detected"
-        # Use the largest face
-        x, y, fw, fh = max(faces, key=lambda f: f[2] * f[3])
-        face_region = gray[y:y + fh, x:x + fw]
-        if face_region.size == 0:
-            return 0.5, "empty face region"
-        # Compare left half to mirrored right half
-        mid = fw // 2
-        left = face_region[:, :mid].astype(np.float32)
-        right = np.fliplr(face_region[:, mid:mid + mid]).astype(np.float32)
-        min_w = min(left.shape[1], right.shape[1])
-        diff = np.abs(left[:, :min_w] - right[:, :min_w])
-        asymmetry = float(diff.mean()) / 255.0
-        # Scale: > 0.3 asymmetry is highly suspicious
-        score = min(1.0, asymmetry / 0.3)
-        return score, None
-    except Exception as exc:
-        return 0.5, str(exc)
-
-
-def _detect_compression_artifacts(file_path: str) -> tuple[float, str | None]:
-    """
-    JPEG block-artifact detector.
-    Edited/generated images often have inconsistent 8×8 DCT block boundaries.
-    """
-    try:
-        arr = _load_image_array(file_path)
-        if arr is None:
-            return 0.5, "could not load image"
-        gray = cv2.cvtColor(arr, cv2.COLOR_BGR2GRAY).astype(np.float32)
-        h, w = gray.shape
-        # Compute horizontal and vertical differences at 8-pixel boundaries
-        block_size = 8
-        h_diffs, v_diffs = [], []
-        for col in range(block_size, w, block_size):
-            diff = np.abs(gray[:, col].astype(float) - gray[:, col - 1].astype(float))
-            h_diffs.append(float(diff.mean()))
-        for row in range(block_size, h, block_size):
-            diff = np.abs(gray[row, :].astype(float) - gray[row - 1, :].astype(float))
-            v_diffs.append(float(diff.mean()))
-        if not h_diffs or not v_diffs:
-            return 0.5, "image too small for block analysis"
-        boundary_mean = np.mean(h_diffs + v_diffs)
-        # Interior pixel differences (non-boundary)
-        interior_diff = float(np.abs(np.diff(gray, axis=1)).mean())
-        if interior_diff == 0:
-            return 0.5, "zero interior variance"
-        ratio = boundary_mean / (interior_diff + 1e-9)
-        # High ratio → strong block boundaries → suspicious
-        score = min(1.0, max(0.0, (ratio - 1.0) / 2.0))
-        return score, None
-    except Exception as exc:
-        return 0.5, str(exc)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# DeepFace wrapper (optional — heavyweight dependency)
-# ─────────────────────────────────────────────────────────────────────────────
-
-
-def _detect_with_deepface(file_path: str) -> tuple[float, str | None]:
-    """
-    Use DeepFace face attribute analysis as a proxy signal.
-    A real face with normal attributes → lower score.
-    Falls back to 0.5 if DeepFace is not installed or fails.
-    """
-    try:
-        import deepface.DeepFace as DeepFace  # type: ignore
+        from deepface import DeepFace
+        frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
         result = DeepFace.analyze(
-            img_path=file_path,
-            actions=["emotion", "age", "gender"],
-            enforce_detection=False,
+            frame_rgb,
+            actions=["emotion"],
+            enforce_detection=True,
             silent=True,
         )
         if isinstance(result, list):
             result = result[0]
-        # Use dominant emotion confidence as a proxy — deepfakes often look "neutral"
-        emotions = result.get("emotion", {})
-        if emotions:
-            neutral_pct = float(emotions.get("neutral", 0))
-            # Extremely high neutral % is a weak deepfake signal
-            score = min(1.0, neutral_pct / 100.0 * 0.6)
-        else:
-            score = 0.5
-        return score, None
+        region = result.get("region", {})
+        face_w = region.get("w", 0)
+        face_h = region.get("h", 0)
+        return {"found": True, "face_w": face_w, "face_h": face_h}
+    except Exception:
+        return {"found": False}
+
+
+def detect_face_consistency(file_path: str) -> dict[str, Any]:
+    """Check face consistency across frames (video) or geometry (image)."""
+    try:
+        import deepface
     except ImportError:
-        return 0.5, "deepface not installed"
-    except Exception as exc:
-        return 0.5, str(exc)
+        return {"confidence": 0.5, "signal": "DeepFace package not installed", "model": "face", "disabled": True}
+
+    try:
+        if _is_video(file_path):
+            frames = _extract_frames(file_path, max_frames=5)
+            if not frames:
+                return {"confidence": 0.5, "signal": "Could not extract frames", "model": "face", "disabled": True}
+
+            face_results = [_analyze_face_frame(f) for f in frames]
+            found_faces = [r for r in face_results if r.get("found")]
+
+            if len(found_faces) < 2:
+                return {
+                    "confidence": 0.4,
+                    "signal": "Insufficient faces detected for consistency check",
+                    "model": "face",
+                }
+
+            widths = [r["face_w"] for r in found_faces if r["face_w"] > 0]
+            if len(widths) < 2:
+                return {"confidence": 0.4, "signal": "Face region data incomplete", "model": "face"}
+
+            width_variance = float(np.var(widths))
+            mean_width = float(np.mean(widths))
+            normalized_variance = width_variance / (mean_width ** 2 + 1e-8)
+
+            score = float(np.clip(normalized_variance / 0.05, 0.0, 1.0))
+            return {
+                "confidence": score,
+                "signal": f"Face size variance across {len(found_faces)} frames: {normalized_variance:.4f}",
+                "model": "face",
+            }
+        else:
+            img = _load_image(file_path)
+            if img is None:
+                return {"confidence": 0.5, "signal": "Could not load image", "model": "face", "disabled": True}
+            face_result = _analyze_face_frame(img)
+            if not face_result.get("found"):
+                return {
+                    "confidence": 0.3,
+                    "signal": "No face detected in image",
+                    "model": "face",
+                }
+            return {
+                "confidence": 0.35,
+                "signal": "Face detected. Single image — no temporal consistency check possible.",
+                "model": "face",
+            }
+    except Exception as e:
+        return {"confidence": 0.5, "signal": f"Error: {str(e)}", "model": "face", "disabled": True}
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Ensemble aggregator
-# ─────────────────────────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------------
+# MODEL D — Temporal Consistency (Video Only)
+# ---------------------------------------------------------------------------
 
-# Detector name → (function, weight)
-_DETECTORS: dict[str, tuple[Any, float]] = {
-    "ela":                  (_detect_ela_score,             0.30),
-    "frequency_anomaly":    (_detect_frequency_anomaly,     0.20),
-    "noise_inconsistency":  (_detect_noise_inconsistency,   0.20),
-    "face_asymmetry":       (_detect_face_asymmetry,        0.15),
-    "compression_artifacts":(_detect_compression_artifacts, 0.10),
-    "deepface":             (_detect_with_deepface,         0.05),
-}
+def detect_temporal_consistency(file_path: str) -> dict[str, Any]:
+    """Analyze optical flow between consecutive video frames."""
+    try:
+        if not _is_video(file_path):
+            return {
+                "confidence": 0.5,
+                "signal": "Temporal analysis not applicable to single images.",
+                "model": "temporal",
+                "skipped": True,
+            }
 
+        frames = _extract_frames(file_path, max_frames=8)
+        if len(frames) < 2:
+            return {
+                "confidence": 0.5,
+                "signal": "Not enough frames for temporal analysis",
+                "model": "temporal",
+                "disabled": True
+            }
 
-def run_ensemble(file_path: str) -> dict[str, Any]:
-    """
-    Run all ML detectors on *file_path* and return a combined verdict dict.
+        flow_scores = []
+        for i in range(len(frames) - 1):
+            gray1 = cv2.cvtColor(frames[i],   cv2.COLOR_BGR2GRAY)
+            gray2 = cv2.cvtColor(frames[i+1], cv2.COLOR_BGR2GRAY)
+            flow = cv2.calcOpticalFlowFarneback(
+                gray1, gray2, None,
+                pyr_scale=0.5, levels=3, winsize=15,
+                iterations=3, poly_n=5, poly_sigma=1.2,
+                flags=0,
+            )
+            magnitude = np.sqrt(flow[..., 0]**2 + flow[..., 1]**2)
+            flow_scores.append(float(magnitude.mean()))
 
-    Returns
-    -------
-    dict with keys:
-        final_confidence   float  — weighted ensemble score in [0.0, 1.0]
-        confidence_percent float  — same score scaled to 0–100
-        verdict            str    — 'real' | 'suspicious' | 'fake' | 'unknown'
-        model_results      dict   — per-detector {'score': float, 'error': str|None}
-        weights_used       dict   — per-detector weight
-        error              str    — present only if ALL detectors failed
-    """
-    if not os.path.isfile(file_path):
+        if not flow_scores:
+            return {"confidence": 0.5, "signal": "Optical flow computation failed", "model": "temporal", "disabled": True}
+
+        mean_flow = float(np.mean(flow_scores))
+        std_flow  = float(np.std(flow_scores))
+
+        variance_score = float(np.clip(std_flow / 5.0, 0.0, 1.0))
+
         return {
-            "final_confidence": 0.5,
+            "confidence": variance_score,
+            "signal": (
+                f"Optical flow analysis across {len(frames)} frames. "
+                f"Mean flow: {mean_flow:.2f}, Variance: {std_flow:.2f}"
+            ),
+            "model": "temporal",
+        }
+    except Exception as e:
+        return {"confidence": 0.5, "signal": f"Error: {str(e)}", "model": "temporal", "disabled": True}
+
+
+# ---------------------------------------------------------------------------
+# ENSEMBLE VERDICT ENGINE
+# ---------------------------------------------------------------------------
+
+def run_ml_ensemble(file_path: str) -> dict[str, Any]:
+    """Run active models and combine results using dynamically redistributed weights."""
+    is_video = _is_video(file_path)
+
+    # Run all models
+    results = {
+        "huggingface": detect_huggingface(file_path),
+        "frequency":   detect_frequency(file_path),
+        "face":        detect_face_consistency(file_path),
+        "temporal":    detect_temporal_consistency(file_path),
+    }
+
+    # Build weights — filter out skipped or disabled models
+    weights = dict(_WEIGHTS)
+    
+    # Filter skipped temporal for images
+    if not is_video or results["temporal"].get("skipped"):
+        weights.pop("temporal", None)
+        
+    # Filter disabled models
+    active_models = []
+    for model_name in list(weights.keys()):
+        if results[model_name].get("disabled"):
+            weights.pop(model_name)
+        else:
+            active_models.append(model_name)
+
+    if not weights:
+        # Fallback: if everything is disabled, return inconclusive
+        return {
+            "fake_probability": 0.5,
             "confidence_percent": 50.0,
-            "verdict": "unknown",
-            "model_results": {},
+            "verdict": "inconclusive",
+            "model_results": results,
             "weights_used": {},
-            "error": f"File not found: {file_path}",
+            "is_video": is_video,
         }
 
-    model_results: dict[str, dict] = {}
-    weights_used: dict[str, float] = {}
-    weighted_sum = 0.0
-    total_weight = 0.0
-    all_failed = True
+    # Redistribute weights to sum to 1.0
+    total_weight = sum(weights.values())
+    for k in weights:
+        weights[k] = weights[k] / total_weight
 
-    for name, (fn, weight) in _DETECTORS.items():
-        score, err = fn(file_path)
-        model_results[name] = {"score": round(score, 4), "error": err}
-        weights_used[name] = weight
-        if err is None:
-            all_failed = False
-        weighted_sum += score * weight
-        total_weight += weight
+    # Compute weighted average
+    fake_probability = 0.0
+    for model_name, weight in weights.items():
+        model_confidence = results[model_name].get("confidence", 0.5)
+        fake_probability += model_confidence * weight
 
-    final_confidence = weighted_sum / total_weight if total_weight > 0 else 0.5
+    fake_probability = float(np.clip(fake_probability, 0.0, 1.0))
 
-    if all_failed:
-        verdict = "unknown"
-    elif final_confidence >= 0.65:
+    # Determine verdict
+    if fake_probability >= _THRESHOLD_FAKE:
         verdict = "fake"
-    elif final_confidence >= 0.40:
+    elif fake_probability >= _THRESHOLD_SUSPICIOUS:
         verdict = "suspicious"
     else:
         verdict = "real"
 
-    result: dict[str, Any] = {
-        "final_confidence": round(final_confidence, 4),
-        "confidence_percent": round(final_confidence * 100, 2),
+    # Cleanup resources (Phase 7 - REMOVE RESOURCE EXHAUSTION)
+    global _hf_pipeline
+    if _hf_pipeline is not None:
+        del _hf_pipeline
+        _hf_pipeline = None
+        
+    gc.collect()
+    try:
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:
+        pass
+
+    return {
+        "fake_probability": round(fake_probability, 4),
+        "confidence_percent": round(fake_probability * 100, 1),
         "verdict": verdict,
-        "model_results": model_results,
-        "weights_used": weights_used,
+        "model_results": results,
+        "weights_used": {k: round(v, 4) for k, v in weights.items()},
+        "is_video": is_video,
     }
-    if all_failed:
-        result["error"] = "All detectors failed — scores are neutral defaults"
-    return result

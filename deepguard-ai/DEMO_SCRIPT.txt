@@ -1,0 +1,56 @@
+# DeepGuard AI – Demo Script
+
+#!/usr/bin/env bash
+# ------------------------------------------------------------
+# DeepGuard AI End‑to‑End Demonstration
+# ------------------------------------------------------------
+# This script showcases the full pipeline from uploading a media
+# file to receiving a forensic report via the FastAPI backend.
+# It can be run on any platform with Bash, curl, and jq installed.
+
+# -----------------------------------------------------------------
+# 1️⃣  Start the backend (if not already running)
+# -----------------------------------------------------------------
+# uvicorn deepguard_ai.app.api:app --host 0.0.0.0 --port 8000 &
+# SERVER_PID=$!
+# echo "🚀 FastAPI server started (PID $SERVER_PID)"
+
+# -----------------------------------------------------------------
+# 2️⃣  Wait for the health endpoint to become ready
+# -----------------------------------------------------------------
+until curl -s http://localhost:8000/health | grep -q "\"status\": \"ok\""; do
+  echo "⏳ Waiting for backend…"
+  sleep 1
+done
+
+echo "✅ Backend is healthy"
+
+# -----------------------------------------------------------------
+# 3️⃣  Upload a sample image (generated earlier by the project)
+# -----------------------------------------------------------------
+IMAGE=./test_image_1783392407215.png
+echo "📤 Uploading $IMAGE to /api/analyze …"
+RESPONSE=$(curl -s -X POST "http://localhost:8000/api/analyze" \
+  -F "file=@${IMAGE}" -H "Accept: application/json")
+
+# -----------------------------------------------------------------
+# 4️⃣  Pretty‑print the JSON response (requires jq)
+# -----------------------------------------------------------------
+echo "\n🧾 DeepGuard AI Report"
+echo "$RESPONSE" | jq '.'
+
+# -----------------------------------------------------------------
+# 5️⃣  Highlight key results for quick review
+# -----------------------------------------------------------------
+VERDICT=$(echo "$RESPONSE" | jq -r '.verdict')
+CONF=$(echo "$RESPONSE" | jq -r '.ml_ensemble.confidence_percent')
+echo "\n🔎 Verdict: $VERDICT (Confidence: $CONF%)"
+
+# -----------------------------------------------------------------
+# 6️⃣  (Optional) Shut down the backend if we started it
+# -----------------------------------------------------------------
+# kill $SERVER_PID && echo "🛑 FastAPI server stopped"
+
+# End of script
+```
+Save this script as `demo.sh`, make it executable (`chmod +x demo.sh`), and run it. The output walks you through each stage of the DeepGuard AI pipeline, from upload to forensic verdict.

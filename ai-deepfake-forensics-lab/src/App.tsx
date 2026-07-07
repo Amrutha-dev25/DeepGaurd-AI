@@ -16,23 +16,23 @@ import { STATIC_SAMPLES } from './data/samples';
 import { SampleMedia } from './types';
 import { jsPDF } from 'jspdf';
 import { generateCustomReport, UploadSettings } from './utils/forensicsGenerator';
-import { 	
-  Shield, 
-  Sparkles, 
-  Sliders, 
-  Check, 
-  CircleAlert, 
-  FileSignature, 
-  ArrowRight, 
-  Activity, 
-  FileCheck2, 
-  Cpu, 
-  Search, 
-  Share2, 
-  Globe, 
-  Mail, 
-  Phone, 
-  MapPin, 
+import {
+  Shield,
+  Sparkles,
+  Sliders,
+  Check,
+  CircleAlert,
+  FileSignature,
+  ArrowRight,
+  Activity,
+  FileCheck2,
+  Cpu,
+  Search,
+  Share2,
+  Globe,
+  Mail,
+  Phone,
+  MapPin,
   Send,
   Fingerprint,
   Lock,
@@ -54,7 +54,7 @@ const INDICATORS = [
 export default function App() {
   const [activeTab, setActiveTab] = useState<'home' | 'samples' | 'test' | 'contact'>('home');
   const [selectedReportSample, setSelectedReportSample] = useState<SampleMedia | null>(null);
-  
+
   // Tab-independent active report to render Page 4
   const [activeReport, setActiveReport] = useState<SampleMedia | null>(STATIC_SAMPLES[0]);
   const [isScanning, setIsScanning] = useState<boolean>(false);
@@ -111,27 +111,50 @@ export default function App() {
     setSelectedReportSample(sample);
   };
 
-const handleCustomFileUploaded = async (fileInfo: File | { url: string; type: 'image' | 'video'; name: string }) => {
-  if (isScanning) return;
-  let targetUrl = '';
-  let targetType: 'image' | 'video' = 'image';
-  let targetName = 'suspect_evidence';
-  let targetFile: File | undefined;
+  const handleCustomFileUploaded = async (fileInfo: File | { url: string; type: 'image' | 'video'; name: string }) => {
+    if (isScanning) return;
+    let targetUrl = '';
+    let targetType: 'image' | 'video' = 'image';
+    let targetName = 'suspect_evidence';
+    let targetFile: File | undefined;
 
-  if (fileInfo instanceof File) {
-    targetUrl = URL.createObjectURL(fileInfo);
-    targetType = fileInfo.type.startsWith('video/') ? 'video' : 'image';
-    targetName = fileInfo.name;
-    targetFile = fileInfo;
-  } else {
-    targetUrl = fileInfo.url;
-    targetType = fileInfo.type;
-    targetName = fileInfo.name;
-  }
+    if (fileInfo instanceof File) {
+      targetUrl = URL.createObjectURL(fileInfo);
+      targetType = fileInfo.type.startsWith('video/') ? 'video' : 'image';
+      targetName = fileInfo.name;
+      targetFile = fileInfo;
+    } else {
+      targetUrl = fileInfo.url;
+      targetType = fileInfo.type;
+      targetName = fileInfo.name;
+    }
 
-  setCustomFile({ url: targetUrl, type: targetType, name: targetName, file: targetFile });
+    setCustomFile({ url: targetUrl, type: targetType, name: targetName, file: targetFile });
 
-  if (targetFile) {
+    if (targetFile) {
+      setIsScanning(true);
+      setScanProgress(0);
+      const progressTimer = setInterval(() => {
+        setScanProgress((prev) => {
+          if (prev >= 90) { clearInterval(progressTimer); return 90; }
+          return prev + 3;
+        });
+      }, 200);
+      try {
+        const report = await generateCustomReport(targetUrl, targetName, targetType, targetFile);
+        clearInterval(progressTimer);
+        setScanProgress(100);
+        triggerScanAnimation(report);
+      } catch (err) {
+        console.error('Analysis failed:', err);
+        clearInterval(progressTimer);
+        setIsScanning(false);
+      }
+    }
+  };
+
+  const handleApplyCustomSettings = async () => {
+    if (!customFile?.file || isScanning) return;
     setIsScanning(true);
     setScanProgress(0);
     const progressTimer = setInterval(() => {
@@ -141,44 +164,21 @@ const handleCustomFileUploaded = async (fileInfo: File | { url: string; type: 'i
       });
     }, 200);
     try {
-      const report = await generateCustomReport(targetUrl, targetName, targetType, targetFile);
+      const report = await generateCustomReport(customFile.url, customFile.name, customFile.type, customFile.file);
       clearInterval(progressTimer);
       setScanProgress(100);
       triggerScanAnimation(report);
     } catch (err) {
-      console.error('Analysis failed:', err);
+      console.error('Re-analysis failed:', err);
       clearInterval(progressTimer);
       setIsScanning(false);
     }
-  }
-};
-
-  const handleApplyCustomSettings = async () => {
-  if (!customFile?.file || isScanning) return;
-  setIsScanning(true);
-  setScanProgress(0);
-  const progressTimer = setInterval(() => {
-    setScanProgress((prev) => {
-      if (prev >= 90) { clearInterval(progressTimer); return 90; }
-      return prev + 3;
-    });
-  }, 200);
-  try {
-    const report = await generateCustomReport(customFile.url, customFile.name, customFile.type, customFile.file);
-    clearInterval(progressTimer);
-    setScanProgress(100);
-    triggerScanAnimation(report);
-  } catch (err) {
-    console.error('Re-analysis failed:', err);
-    clearInterval(progressTimer);
-    setIsScanning(false);
-  }
-};
+  };
 
   const handleContactSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!contactForm.name || !contactForm.email || !contactForm.message) return;
-    
+
     const ticketId = `SEC-DF-${(Math.random() * 900000 + 100000).toFixed(0)}`;
     setSubmittedTicket(ticketId);
   };
@@ -228,8 +228,8 @@ const handleCustomFileUploaded = async (fileInfo: File | { url: string; type: 'i
 
         // 3. Verdict Highlight Box (depending on class)
         const isFake = report.class === 'Fake';
-        const accentColor = isFake ? { rgb: [244, 63, 94], label: 'DEEPFAKE ANOMALIES DETECTED' } 
-                                   : { rgb: [16, 185, 129], label: 'VERIFIED GENUINE / HIGH INTEGRITY' };
+        const accentColor = isFake ? { rgb: [244, 63, 94], label: 'DEEPFAKE ANOMALIES DETECTED' }
+          : { rgb: [16, 185, 129], label: 'VERIFIED GENUINE / HIGH INTEGRITY' };
 
         // Verdict banner box
         doc.setFillColor(accentColor.rgb[0], accentColor.rgb[1], accentColor.rgb[2]);
@@ -280,7 +280,7 @@ const handleCustomFileUploaded = async (fileInfo: File | { url: string; type: 'i
         // Right column values
         const timeStr = new Date().toLocaleString();
         doc.text(timeStr, 156, 58);
-        
+
         // Color code model confidence and threat
         doc.setTextColor(isFake ? 244 : 16, isFake ? 63 : 185, isFake ? 94 : 129);
         doc.text(`${report.confidence}% Precision Score`, 156, 64);
@@ -297,7 +297,7 @@ const handleCustomFileUploaded = async (fileInfo: File | { url: string; type: 'i
 
         doc.setFont("helvetica", "normal");
         doc.setFontSize(9.5);
-        
+
         report.findings.forEach((finding, idx) => {
           // Drawing a tiny square bullet matching verdict color
           doc.setFillColor(accentColor.rgb[0], accentColor.rgb[1], accentColor.rgb[2]);
@@ -305,8 +305,8 @@ const handleCustomFileUploaded = async (fileInfo: File | { url: string; type: 'i
 
           doc.setFont("helvetica", "bold");
           doc.setTextColor(15, 23, 42);
-          doc.text(`[Anomaly Vector 0${idx+1}]:`, 21, currentY - 1);
-          
+          doc.text(`[Anomaly Vector 0${idx + 1}]:`, 21, currentY - 1);
+
           doc.setFont("helvetica", "normal");
           doc.setTextColor(51, 65, 85); // slate-700
           // Wrap finding description text nicely
@@ -321,7 +321,7 @@ const handleCustomFileUploaded = async (fileInfo: File | { url: string; type: 'i
 
         // 6. Section II: Forensic Comments & Simple English Explanation
         drawSectionHeader("II. FORENSIC CLINICAL SUMMARY & EXPLANATION");
-        
+
         doc.setFont("helvetica", "normal");
         doc.setFontSize(9);
         doc.setTextColor(51, 65, 85);
@@ -370,7 +370,7 @@ const handleCustomFileUploaded = async (fileInfo: File | { url: string; type: 'i
 
   return (
     <div className="min-h-screen bg-gray-950 text-gray-100 font-sans transition-colors duration-300 relative selection:bg-cyan-500/30 selection:text-cyan-200">
-      
+
       {/* Background Matrix & Stars Canvas */}
       <div className="fixed inset-0 z-0 overflow-hidden pointer-events-none">
         <SpaceBackgroundGrid />
@@ -386,7 +386,7 @@ const handleCustomFileUploaded = async (fileInfo: File | { url: string; type: 'i
 
       <main className="relative z-10 w-full overflow-hidden">
         <AnimatePresence mode="wait">
-          
+
           {/* ==================== 🏠 PAGE 1: HOME ==================== */}
           {activeTab === 'home' && (
             <motion.div
@@ -406,7 +406,7 @@ const handleCustomFileUploaded = async (fileInfo: File | { url: string; type: 'i
                 className="relative bg-gray-950 py-24 md:py-32 border-b border-gray-900/60 overflow-hidden"
               >
                 {/* Background video within hero container */}
-                <div className="absolute inset-0 z-0 overflow-hidden pointer-events-none opacity-20">
+                {/*<div className="absolute inset-0 z-0 overflow-hidden pointer-events-none opacity-20">
                   <video
                     autoPlay
                     muted
@@ -419,11 +419,11 @@ const handleCustomFileUploaded = async (fileInfo: File | { url: string; type: 'i
                     }}
                   />
                   <div className="absolute inset-0 bg-gradient-to-t from-gray-950 via-gray-950/70 to-transparent" />
-                </div>
+                </div>*/}
 
                 <div className="max-w-[1200px] mx-auto px-5 text-center relative z-10 space-y-6">
                   {/* Cyber decorative badge */}
-                  <motion.span 
+                  <motion.span
                     initial={{ scale: 0.95, opacity: 0 }}
                     animate={{ scale: 1, opacity: 1 }}
                     transition={{ delay: 0.2 }}
@@ -436,9 +436,9 @@ const handleCustomFileUploaded = async (fileInfo: File | { url: string; type: 'i
                   <h1 className="text-4xl md:text-6xl lg:text-7xl font-black text-transparent bg-clip-text bg-gradient-to-r from-white via-cyan-100 to-sky-300 tracking-tight leading-none mx-auto max-w-4xl py-2">
                     Deepfake Forensics Intelligence Lab
                   </h1>
-                  
+
                   <p className="text-sm md:text-base text-gray-400 max-w-2xl mx-auto tracking-wide leading-relaxed">
-                    AI-powered investigation for digital media authenticity. 
+                    AI-powered investigation for digital media authenticity.
                     Isolate biological, temporal, and spatial vectors to identify synthetic manipulations.
                   </p>
 
@@ -486,7 +486,7 @@ const handleCustomFileUploaded = async (fileInfo: File | { url: string; type: 'i
                       { label: "System Accuracy", value: "99.2%", detail: "Validation precision tier", color: "text-emerald-400" },
                       { label: "Pending cases", value: "2", detail: "Active queue queueing", color: "text-indigo-400" }
                     ].map((stat, i) => (
-                      <motion.div 
+                      <motion.div
                         key={i}
                         variants={{
                           hidden: { opacity: 0, y: 15 },
@@ -558,7 +558,7 @@ const handleCustomFileUploaded = async (fileInfo: File | { url: string; type: 'i
                       { step: "03", title: "Detect Manipulation", desc: "Map local frequency noise variations (ELA) and identify blending seams." },
                       { step: "04", title: "Generate Report", desc: "Retrieve classified verification parameters, confidence ratings, and certificate PDF." }
                     ].map((wf, idx) => (
-                      <motion.div 
+                      <motion.div
                         key={idx}
                         initial={{ opacity: 0, y: 15 }}
                         whileInView={{ opacity: 1, y: 0 }}
@@ -606,26 +606,25 @@ const handleCustomFileUploaded = async (fileInfo: File | { url: string; type: 'i
                     {STATIC_SAMPLES.map((sample) => {
                       const isFake = sample.class === 'Fake';
                       return (
-                        <div 
+                        <div
                           key={sample.id}
                           className="bg-gray-900/25 border border-gray-900 rounded-2xl overflow-hidden hover:scale-[1.02] hover:border-cyan-500/20 hover:shadow-[0_8px_30px_rgba(6,182,212,0.06)] transition-all duration-300 flex flex-col justify-between h-full"
                         >
                           {/* Media Image preview */}
                           <div className="relative aspect-video w-full overflow-hidden bg-black border-b border-gray-900">
-                            <img 
-                              src={sample.url} 
+                            <img
+                              src={sample.url}
                               alt={sample.title}
                               referrerPolicy="no-referrer"
                               className="w-full h-full object-cover opacity-75 group-hover:scale-105 transition-all duration-500"
                             />
-                            <span className={`absolute top-4 right-4 text-[9px] font-mono font-extrabold px-3 py-1 bg-black/80 rounded-full uppercase border ${
-                              isFake 
-                                ? 'text-rose-400 border-rose-900/50' 
-                                : 'text-emerald-400 border-emerald-900/50'
-                            }`}>
+                            <span className={`absolute top-4 right-4 text-[9px] font-mono font-extrabold px-3 py-1 bg-black/80 rounded-full uppercase border ${isFake
+                              ? 'text-rose-400 border-rose-900/50'
+                              : 'text-emerald-400 border-emerald-900/50'
+                              }`}>
                               {sample.class === 'Fake' ? 'DEEPFAKE ANOMALIES' : 'VERIFIED GENUINE'}
                             </span>
-                            
+
                             <div className="absolute bottom-4 left-4 right-4 z-10">
                               <span className="text-[10px] font-mono font-semibold tracking-wider text-cyan-400 uppercase">
                                 {sample.category}
@@ -642,7 +641,7 @@ const handleCustomFileUploaded = async (fileInfo: File | { url: string; type: 'i
                             <p className="text-xs text-gray-400 leading-relaxed line-clamp-2">
                               {sample.explanation}
                             </p>
-                            
+
                             <div className="flex items-center gap-3 text-[11px] font-mono pl-3 border-l-2 border-cyan-800">
                               <span className="text-gray-500">PRECISION:</span>
                               <span className={`${isFake ? 'text-rose-450' : 'text-emerald-450'} font-bold`}>
@@ -671,19 +670,19 @@ const handleCustomFileUploaded = async (fileInfo: File | { url: string; type: 'i
               {/* Dedicated Report Modal Overlay */}
               <AnimatePresence>
                 {selectedReportSample && (
-                  <motion.div 
+                  <motion.div
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
                     exit={{ opacity: 0 }}
                     className="fixed inset-0 bg-black/90 backdrop-blur-md z-50 flex items-center justify-center p-4 overflow-y-auto"
                   >
-                    <motion.div 
+                    <motion.div
                       initial={{ scale: 0.95, y: 15 }}
                       animate={{ scale: 1, y: 0 }}
                       exit={{ scale: 0.95, y: 15 }}
                       className="bg-gray-950 border border-gray-900 rounded-3xl max-w-4xl w-full p-6 md:p-8 space-y-6 relative max-h-[90vh] overflow-y-auto shadow-2xl"
                     >
-                      <button 
+                      <button
                         onClick={() => setSelectedReportSample(null)}
                         className="absolute top-5 right-5 p-2 bg-gray-900 text-gray-400 hover:text-white rounded-full transition-all duration-300"
                         title="Close Modal"
@@ -703,14 +702,14 @@ const handleCustomFileUploaded = async (fileInfo: File | { url: string; type: 'i
 
                       {/* Diagnostic Split Layout */}
                       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
-                        
+
                         {/* Interactive Viewer visual highlight */}
                         <div className="lg:col-span-6 space-y-4">
-                          <InteractiveViewer 
-                            media={selectedReportSample} 
-                            isScanning={false} 
-                            scanProgress={100} 
-                            onReScan={() => {}} 
+                          <InteractiveViewer
+                            media={selectedReportSample}
+                            isScanning={false}
+                            scanProgress={100}
+                            onReScan={() => { }}
                           />
                         </div>
 
@@ -798,7 +797,7 @@ const handleCustomFileUploaded = async (fileInfo: File | { url: string; type: 'i
 
                   {/* Main centered structured drag & drop zone */}
                   <div className="max-w-2xl mx-auto space-y-8">
-                    
+
                     {/* Simulator Settings controller */}
                     <div className="bg-gray-950 border border-gray-900 p-6 rounded-2xl space-y-5 shadow-lg">
                       <div className="flex items-center gap-3">
@@ -817,22 +816,20 @@ const handleCustomFileUploaded = async (fileInfo: File | { url: string; type: 'i
                           <div className="grid grid-cols-2 gap-2">
                             <button
                               onClick={() => setUploadSettings({ ...uploadSettings, suspectClass: 'Fake', risk: 'High' })}
-                              className={`py-2.5 px-3 rounded-lg border text-xs font-bold transition-all duration-300 flex items-center justify-center gap-1.5 ${
-                                uploadSettings.suspectClass === 'Fake'
-                                  ? 'bg-rose-950/30 border-rose-500/60 text-rose-400'
-                                  : 'bg-gray-900 border-gray-800 text-gray-450 hover:bg-gray-850'
-                              }`}
+                              className={`py-2.5 px-3 rounded-lg border text-xs font-bold transition-all duration-300 flex items-center justify-center gap-1.5 ${uploadSettings.suspectClass === 'Fake'
+                                ? 'bg-rose-950/30 border-rose-500/60 text-rose-400'
+                                : 'bg-gray-900 border-gray-800 text-gray-450 hover:bg-gray-850'
+                                }`}
                             >
                               <CircleAlert className="w-3.5 h-3.5" />
                               Synthetic
                             </button>
                             <button
                               onClick={() => setUploadSettings({ ...uploadSettings, suspectClass: 'Real', risk: 'Low' })}
-                              className={`py-2.5 px-3 rounded-lg border text-xs font-bold transition-all duration-300 flex items-center justify-center gap-1.5 ${
-                                uploadSettings.suspectClass === 'Real'
-                                  ? 'bg-emerald-950/30 border-emerald-500/60 text-emerald-400'
-                                  : 'bg-gray-900 border-gray-800 text-gray-450 hover:bg-gray-850'
-                              }`}
+                              className={`py-2.5 px-3 rounded-lg border text-xs font-bold transition-all duration-300 flex items-center justify-center gap-1.5 ${uploadSettings.suspectClass === 'Real'
+                                ? 'bg-emerald-950/30 border-emerald-500/60 text-emerald-400'
+                                : 'bg-gray-900 border-gray-800 text-gray-450 hover:bg-gray-850'
+                                }`}
                             >
                               <Check className="w-3.5 h-3.5" />
                               Genuine
@@ -882,12 +879,12 @@ const handleCustomFileUploaded = async (fileInfo: File | { url: string; type: 'i
 
                   {/* REPORT SECTION: Highly polished with perfect layout structure */}
                   {!isScanning && activeReport && (
-                    <motion.div 
+                    <motion.div
                       initial={{ opacity: 0, y: 30 }}
                       whileInView={{ opacity: 1, y: 0 }}
                       viewport={{ once: true }}
                       transition={{ duration: 0.6 }}
-                      className="border-t border-gray-900 pt-20 space-y-12 max-w-4xl mx-auto" 
+                      className="border-t border-gray-900 pt-20 space-y-12 max-w-4xl mx-auto"
                       id="test-report-panel-container"
                     >
                       <div className="text-center space-y-2">
@@ -906,17 +903,17 @@ const handleCustomFileUploaded = async (fileInfo: File | { url: string; type: 'i
                       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
                         {/* Visualizer output */}
                         <div className="lg:col-span-6 space-y-4">
-                          <InteractiveViewer 
-                            media={activeReport} 
-                            isScanning={false} 
-                            scanProgress={100} 
-                            onReScan={() => triggerScanAnimation(activeReport)} 
+                          <InteractiveViewer
+                            media={activeReport}
+                            isScanning={false}
+                            scanProgress={100}
+                            onReScan={() => triggerScanAnimation(activeReport)}
                           />
                         </div>
 
                         {/* Numerical and Descriptive Disclosures */}
                         <div className="lg:col-span-6 space-y-6">
-                          
+
                           {/* Prediction Badge, Confidence, and Threat Level */}
                           <div className="space-y-4">
                             <div className="p-5 bg-gray-950 rounded-2xl border border-gray-900 flex items-center justify-between shadow-sm">
@@ -926,11 +923,10 @@ const handleCustomFileUploaded = async (fileInfo: File | { url: string; type: 'i
                                   {activeReport.class === 'Fake' ? '🔴 DEEPFAKE DETECTED' : '🟢 VERIFIED GENUINE'}
                                 </div>
                               </div>
-                              <div className={`px-3 py-1.5 text-[10px] font-bold rounded uppercase border font-mono tracking-wider ${
-                                activeReport.risk === 'High' 
-                                  ? 'bg-rose-950/35 text-rose-400 border-rose-900/50'
-                                  : 'bg-emerald-950/35 text-emerald-400 border-emerald-900/50'
-                              }`}>
+                              <div className={`px-3 py-1.5 text-[10px] font-bold rounded uppercase border font-mono tracking-wider ${activeReport.risk === 'High'
+                                ? 'bg-rose-950/35 text-rose-400 border-rose-900/50'
+                                : 'bg-emerald-950/35 text-emerald-400 border-emerald-900/50'
+                                }`}>
                                 {activeReport.risk} Risk Threat
                               </div>
                             </div>
@@ -942,9 +938,9 @@ const handleCustomFileUploaded = async (fileInfo: File | { url: string; type: 'i
                                 <strong className="text-cyan-400 font-mono font-black">{activeReport.confidence}%</strong>
                               </div>
                               <div className="w-full bg-gray-900 h-2 rounded-full overflow-hidden">
-                                <div 
-                                  className={`h-full rounded-full ${activeReport.class === 'Fake' ? 'bg-rose-500' : 'bg-emerald-500'}`} 
-                                  style={{ width: `${activeReport.confidence}%` }} 
+                                <div
+                                  className={`h-full rounded-full ${activeReport.class === 'Fake' ? 'bg-rose-500' : 'bg-emerald-500'}`}
+                                  style={{ width: `${activeReport.confidence}%` }}
                                 />
                               </div>
                             </div>
@@ -1016,7 +1012,7 @@ const handleCustomFileUploaded = async (fileInfo: File | { url: string; type: 'i
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-12 gap-8 items-stretch max-w-4xl mx-auto">
-                    
+
                     {/* Information cards */}
                     <div className="md:col-span-5">
                       <div className="bg-gray-950 border border-gray-900 p-6 rounded-2xl space-y-6 shadow-md flex flex-col justify-between h-full min-h-[360px]">
@@ -1099,8 +1095,8 @@ const handleCustomFileUploaded = async (fileInfo: File | { url: string; type: 'i
                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
                             <div className="space-y-1.5">
                               <label className="text-gray-400 font-semibold block">Operator Name</label>
-                              <input 
-                                type="text" 
+                              <input
+                                type="text"
                                 required
                                 placeholder="e.g. Inspector Blake"
                                 value={contactForm.name}
@@ -1111,8 +1107,8 @@ const handleCustomFileUploaded = async (fileInfo: File | { url: string; type: 'i
 
                             <div className="space-y-1.5">
                               <label className="text-gray-400 font-semibold block">Routing Email</label>
-                              <input 
-                                type="email" 
+                              <input
+                                type="email"
                                 required
                                 placeholder="operator@proton.me"
                                 value={contactForm.email}
@@ -1124,7 +1120,7 @@ const handleCustomFileUploaded = async (fileInfo: File | { url: string; type: 'i
 
                           <div className="space-y-1.5 text-xs">
                             <label className="text-gray-400 font-semibold block">Operational Category</label>
-                            <select 
+                            <select
                               value={contactForm.category}
                               onChange={(e) => setContactForm({ ...contactForm, category: e.target.value })}
                               className="w-full p-2.5 bg-gray-900 rounded-lg border border-gray-800 focus:border-cyan-500/50 text-white outline-none transition duration-200"
@@ -1137,7 +1133,7 @@ const handleCustomFileUploaded = async (fileInfo: File | { url: string; type: 'i
 
                           <div className="space-y-1.5 text-xs">
                             <label className="text-gray-400 font-semibold block">Detailed Inquiry Message</label>
-                            <textarea 
+                            <textarea
                               rows={4}
                               required
                               placeholder="Describe the anomalies or request technical support assistance details..."

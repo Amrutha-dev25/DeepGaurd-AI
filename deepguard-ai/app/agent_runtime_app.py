@@ -81,6 +81,7 @@ class AgentEngineApp(AdkApp):
         else:
             # Fallback logger that writes to stdout
             self.logger = logging.getLogger(__name__)
+        gemini_location = os.environ.get("GOOGLE_CLOUD_LOCATION")
         if gemini_location:
             os.environ["GOOGLE_CLOUD_LOCATION"] = gemini_location
 
@@ -100,7 +101,6 @@ class AgentEngineApp(AdkApp):
         return self
 
 
-gemini_location = os.environ.get("GOOGLE_CLOUD_LOCATION")
 logs_bucket_name = os.environ.get("LOGS_BUCKET_NAME")
 # Instantiate AgentEngineApp unconditionally; internal set_up handles vertex usage
 agent_runtime = AgentEngineApp(

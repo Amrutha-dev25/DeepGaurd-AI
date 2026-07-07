@@ -1,0 +1,137 @@
+{
+  "results": {
+    "ela": {
+      "summary": "Potential manipulation detected",
+      "diff_bbox": [
+        0,
+        0,
+        420,
+        420
+      ]
+    },
+    "exif": {
+      "summary": "Extracted 0 EXIF tags",
+      "exif": {}
+    },
+    "hash": {
+      "sha256": "4d480e72fadac08c902f507662570af2e9f5bc55dfbbbdf5ee659b37f8c6936c",
+      "phash": "ac9ac19fc3942c73"
+    },
+    "frames": {
+      "summary": "Single image analyzed",
+      "frame_count": 1,
+      "average_brightness": 178.53100907029477
+    },
+    "ml_ensemble": {
+      "fake_probability": 0.262,
+      "confidence_percent": 26.2,
+      "verdict": "real",
+      "model_results": {
+        "huggingface": {
+          "confidence": 0.13593311607837677,
+          "signal": "Deepfake classifier probability: 13.59%",
+          "model": "huggingface"
+        },
+        "frequency": {
+          "confidence": 0.4004055968236546,
+          "signal": "DCT frequency GAN artifact score: 40.04%",
+          "model": "frequency"
+        },
+        "face": {
+          "confidence": 0.3,
+          "signal": "No face detected in image",
+          "model": "face"
+        },
+        "temporal": {
+          "confidence": 0.5,
+          "signal": "Temporal analysis not applicable to single images.",
+          "model": "temporal",
+          "skipped": true
+        }
+      },
+      "weights_used": {
+        "huggingface": 0.4118,
+        "frequency": 0.2941,
+        "face": 0.2941
+      },
+      "is_video": false
+    }
+  },
+  "report_text": "DeepGuard AI Forensic Report\n================================\nGenerated on: 2026-07-06T01:38:15.557972+00:00\n\n=== Analysis Summary ===\nELA     : Potential manipulation detected\nEXIF    : Extracted 0 EXIF tags\nSHA-256 : 4d480e72fadac08c902f507662570af2e9f5bc55dfbbbdf5ee659b37f8c6936c\nFrames  : Single image analyzed\nVerdict : real\n\n=== Recommendations ===\n- ELA detected pixel-level inconsistencies. Cross-reference with original.\n- No EXIF metadata found. Metadata may have been stripped.\n- Only one frame analyzed. Upload a longer video clip for more thorough analysis.",
+  "report_json": {
+    "timestamp": "2026-07-06T01:38:15.558047+00:00",
+    "results": {
+      "ela": {
+        "summary": "Potential manipulation detected",
+        "diff_bbox": [
+          0,
+          0,
+          420,
+          420
+        ]
+      },
+      "exif": {
+        "summary": "Extracted 0 EXIF tags",
+        "exif": {}
+      },
+      "hash": {
+        "sha256": "4d480e72fadac08c902f507662570af2e9f5bc55dfbbbdf5ee659b37f8c6936c",
+        "phash": "ac9ac19fc3942c73"
+      },
+      "frames": {
+        "summary": "Single image analyzed",
+        "frame_count": 1,
+        "average_brightness": 178.53100907029477
+      },
+      "ml_ensemble": {
+        "fake_probability": 0.262,
+        "confidence_percent": 26.2,
+        "verdict": "real",
+        "model_results": {
+          "huggingface": {
+            "confidence": 0.13593311607837677,
+            "signal": "Deepfake classifier probability: 13.59%",
+            "model": "huggingface"
+          },
+          "frequency": {
+            "confidence": 0.4004055968236546,
+            "signal": "DCT frequency GAN artifact score: 40.04%",
+            "model": "frequency"
+          },
+          "face": {
+            "confidence": 0.3,
+            "signal": "No face detected in image",
+            "model": "face"
+          },
+          "temporal": {
+            "confidence": 0.5,
+            "signal": "Temporal analysis not applicable to single images.",
+            "model": "temporal",
+            "skipped": true
+          }
+        },
+        "weights_used": {
+          "huggingface": 0.4118,
+          "frequency": 0.2941,
+          "face": 0.2941
+        },
+        "is_video": false
+      }
+    },
+    "verdict": "real",
+    "recommendations": [
+      "ELA detected pixel-level inconsistencies. Cross-reference with original.",
+      "No EXIF metadata found. Metadata may have been stripped.",
+      "Only one frame analyzed. Upload a longer video clip for more thorough analysis."
+    ]
+  },
+  "agent_logs": [
+    {
+      "agent": "deepguard_coordinator",
+      "tool": "error",
+      "result": "503 UNAVAILABLE. {'error': {'code': 503, 'message': 'This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.', 'status': 'UNAVAILABLE'}}",
+      "timestamp": "2026-07-06T01:35:45.711419+00:00"
+    }
+  ],
+  "activity_log_path": "C:\\Users\\AMRUTHA KATTIMANI\\OneDrive\\Desktop\\adk-workspace\\deepguard-ai\\app\\logs\\activity_log.json"
+}

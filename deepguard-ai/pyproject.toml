@@ -3,7 +3,7 @@ name = "deepguard-ai"
 version = "0.1.0"
 description = ""
 authors = [
-    {name = "Your Name", email = "your@email.com"},
+    {name = "DeepGuard AI Team", email = "deepguard@example.com"},
 ]
 
 
@@ -24,6 +24,9 @@ dependencies = [
     "python-multipart>=0.0.9,<1.0.0",
     "fastmcp>=0.4.0",
     "python-dotenv>=1.0.1",
+    "slowapi>=0.1.9",
+    "python-magic-bin>=0.4.14; platform_system == 'Windows'",
+    "python-magic>=0.4.27; platform_system != 'Windows'",
     "transformers>=5.12.1",
     "torch>=2.12.1",
     "torchvision>=0.27.1",
