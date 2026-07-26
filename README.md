@@ -1,6 +1,6 @@
 # DeepGuard AI
 
-Multi-agent deepfake video/audio forensics system.
+Multi-agent deepfake video forensics system.
 
 - **3 ADK agents** — Router, Analysis, Report
 - **Sightengine REST API** for primary analysis
