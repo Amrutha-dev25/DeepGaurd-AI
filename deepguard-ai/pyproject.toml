@@ -9,29 +9,41 @@ authors = [
 
 
 dependencies = [
+    # ── ADK framework + LLM routing ──────────────────────────────────
     "google-adk[gcp]>=2.0.0,<3.0.0",
-    "opentelemetry-instrumentation-google-genai>=0.1.0,<1.0.0",
-    "gcsfs>=2024.11.0",
-    "google-cloud-logging>=3.12.0,<4.0.0",
-    "google-cloud-aiplatform[evaluation,agent-engines]>=1.156.0",
-    "protobuf>=6.31.1,<7.0.0",
-    "opencv-python>=4.10.0",
-    "pillow>=10.4.0",
-    "exifread>=3.0.0",
-    "imagehash>=4.3.0",
+
+    # ── Web framework ────────────────────────────────────────────────
     "fastapi>=0.111.0,<1.0.0",
     "uvicorn[standard]>=0.30.0,<1.0.0",
     "python-multipart>=0.0.9,<1.0.0",
-    "fastmcp>=0.4.0",
-    "python-dotenv>=1.0.1",
     "slowapi>=0.1.9",
+
+    # ── Settings & config ────────────────────────────────────────────
+    "pydantic-settings>=2.0.0,<3.0.0",
+
+    # ── HTTP clients ────────────────────────────────────────────────
+    "aiohttp>=3.9.0,<4.0.0",          # Sightengine provider
+    "httpx>=0.27.0",                  # ADK LiteLlm transport
+
+    # ── Image / computer vision ─────────────────────────────────────
+    "opencv-python-headless>=4.10.0", # cv2 (smaller, no GUI deps)
+    "pillow>=10.4.0",                 # PIL Image
+    "numpy>=1.26.0,<2.0.0",           # np — used in wavelet, FFT, DCT
+
+    # ── Forensics ───────────────────────────────────────────────────
+    "exifread>=3.0.0",
+    "imagehash>=4.3.0",
+    "python-magic>=0.4.27",           # MIME detection (Linux/macOS)
     "python-magic-bin>=0.4.14; platform_system == 'Windows'",
-    "python-magic>=0.4.27; platform_system != 'Windows'",
-    "transformers>=5.12.1",
-    "torch>=2.12.1",
-    "torchvision>=0.27.1",
-    "scipy>=1.17.1",
-    "deepface>=0.0.100",
+
+    # ── PDF generation ──────────────────────────────────────────────
+    "fpdf2>=2.8.7",
+
+    # ── Observability (ADK GCP integration) ─────────────────────────
+    "opentelemetry-instrumentation-google-genai>=0.1.0,<1.0.0",
+
+    # ── Legacy aliases for uv/Docker compat ─────────────────────────
+    "python-dotenv>=1.0.1",           # pulled by pydantic-settings, explicit for safety
 ]
 
 requires-python = ">=3.11,<3.14"
@@ -73,7 +85,7 @@ select = [
 ignore = ["E501", "C901", "B006", "B008"] # ignore line too long, too complex, function calls in defaults
 
 [tool.ruff.lint.isort]
-known-first-party = ["app", "frontend"]
+known-first-party = ["app"]
 
 [tool.ty]
 # ty is Astral's Rust-based type checker (same team as ruff/uv)
@@ -98,7 +110,7 @@ deprecated = "ignore"
 
 [tool.codespell]
 ignore-words-list = "rouge"
-skip = "./locust_env/*,uv.lock,.venv,./frontend,**/package-lock.json"
+skip = "./locust_env/*,uv.lock,.venv,**/package-lock.json"
 
 
 
@@ -109,10 +121,10 @@ build-backend = "hatchling.build"
 
 
 [tool.pytest.ini_options]
-pythonpath = "."
+pythonpath = ["backend"]
 asyncio_default_fixture_loop_scope = "function"
 
 [tool.hatch.build.targets.wheel]
-packages = ["app","frontend"]
+packages = ["backend/app"]
 
 

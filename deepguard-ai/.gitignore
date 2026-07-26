@@ -1,0 +1,73 @@
+# ── Secrets ──────────────────────────────────────────────────────────
+.env
+.env.local
+.env.development
+.env.production
+
+!.env.example
+!.env.production.example
+
+# ── Python ───────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# ── Testing & linting ────────────────────────────────────────────────
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+coverage/
+htmlcov/
+
+# ── Virtual environments ─────────────────────────────────────────────
+.venv/
+venv/
+env/
+
+# ── Node / frontend ──────────────────────────────────────────────────
+node_modules/
+frontend/dist/
+frontend/build/
+
+# ── Logs ─────────────────────────────────────────────────────────────
+*.log
+logs/
+_debug_logs/
+frontend/vite_out.txt
+frontend/vite_out2.txt
+frontend/vite_pid.txt
+
+# ── OS files ─────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# ── IDE ──────────────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# ── Docker ───────────────────────────────────────────────────────────
+docker-compose.override.yml
+
+# ── Media samples (user-provided eval data, not tracked) ─────────────
+eval_dataset/images/real/img*.jpg
+eval_dataset/images/real/img*.jpeg
+eval_dataset/images/real/img*.png
+eval_dataset/images/fake/img*.jpg
+eval_dataset/images/fake/img*.jpeg
+eval_dataset/images/fake/img*.png
+eval_dataset/videos/real/vid*.mp4
+eval_dataset/videos/fake/vid*.mp4
+
+# ── Server artifacts ────────────────────────────────────────────────
+server_output.log
+backend/app/results/
+backend/app/uploads/*.jpg
+backend/app/uploads/*.mp4
+test_log_cleanup.py

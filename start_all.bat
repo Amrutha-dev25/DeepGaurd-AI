@@ -1,43 +1,37 @@
 @echo off
 title DeepGuard AI Launcher
 
-echo =====================================
-echo Starting DeepGuard AI...
-echo =====================================
+echo ==========================================
+echo         DeepGuard AI Launcher
+echo ==========================================
 
 cd /d "%~dp0"
 
-:: ============================
-:: Backend
-:: ============================
-start "Backend" cmd /k ^
-"cd /d "%~dp0deepguard-ai" && python -m uvicorn app.api:app --reload --host 127.0.0.1 --port 8000"
+REM ===========================
+REM Backend
+REM ===========================
+start "DeepGuard Backend" cmd.exe /k "cd /d "%~dp0deepguard-ai\backend" && call ..\.venv\Scripts\activate.bat && python -m uvicorn app.api:app --reload --host 127.0.0.1 --port 8000"
 
-timeout /t 5 >nul
+timeout /t 3 >nul
 
-:: ============================
-:: Frontend
-:: ============================
-start "Frontend" cmd /k ^
-"cd /d "%~dp0ai-deepfake-forensics-lab" && npm install && npm run dev"
+REM ===========================
+REM Frontend
+REM ===========================
+start "DeepGuard Frontend" cmd.exe /k "cd /d "%~dp0deepguard-ai\frontend" && npm run dev"
 
-:: ============================
-:: MCP Server
-:: ============================
-start "MCP Server" cmd /k ^
-"cd /d "%~dp0deepguard-ai" && python -m fastmcp.server --port 8090"
+timeout /t 2 >nul
 
-:: ============================
-:: ADK Playground
-:: Replace this command if your project uses a different ADK startup command.
-:: ============================
-start "ADK Playground" cmd /k ^
-"cd /d "%~dp0deepguard-ai" && adk web"
+REM ===========================
+REM ADK
+REM ===========================
+start "DeepGuard ADK" cmd.exe /k "cd /d "%~dp0deepguard-ai" && call .venv\Scripts\activate.bat && adk web --host 127.0.0.1 --port 8001"
 
 echo.
-echo Backend  : http://localhost:8000
-echo Frontend : Check the URL printed by Vite (usually http://localhost:5173)
-echo MCP      : http://localhost:8090
+echo ========================================== 
+echo Starting all services...
+echo ==========================================
+echo Backend  : http://127.0.0.1:8000
+echo Frontend : http://localhost:5173
+echo ADK      : http://127.0.0.1:8001
 echo.
-
 pause

@@ -1,0 +1,61 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  # ── Backend: Cloud Build → Cloud Run ──────────────────────────────
+  deploy-backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Build and push to Artifact Registry
+        run: |
+          gcloud builds submit \
+            --tag "${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/deepguard-ai/backend:${{ github.sha }}"
+
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run deploy deepguard-ai \
+            --image "${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/deepguard-ai/backend:${{ github.sha }}" \
+            --region ${{ vars.GCP_REGION }} \
+            --platform managed \
+            --allow-unauthenticated \
+            --port 8000 \
+            --min-instances 0 \
+            --max-instances 1 \
+            --concurrency 4 \
+            --timeout 120 \
+            --memory 2Gi \
+            --cpu 2 \
+            --startup-cpu-boost \
+            --set-env-vars "^&^GOOGLE_API_KEY=${{ secrets.GOOGLE_API_KEY }}&GROQ_API_KEY=${{ secrets.GROQ_API_KEY }}&PRIMARY_API_KEY=${{ secrets.PRIMARY_API_KEY }}&PRIMARY_ENDPOINT=https://integrate.api.nvidia.com/v1&SIGHTENGINE_API_USER=${{ secrets.SIGHTENGINE_API_USER }}&SIGHTENGINE_API_SECRET=${{ secrets.SIGHTENGINE_API_SECRET }}&TAVILY_API_KEY=${{ secrets.TAVILY_API_KEY }}&ENABLE_GEMINI_FALLBACK=true&FRONTEND_URL=${{ vars.FRONTEND_URL }}&LOG_LEVEL=info"
+
+  # ── Frontend: Vercel auto-deploys on push to main ─────────────────
+  # Vercel is configured via GitHub integration (not this workflow).
+  # When connected, Vercel automatically detects pushes and deploys.
+  # This job is informational and runs a post-deploy verification.
+  verify-frontend:
+    needs: deploy-backend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify backend health
+        run: |
+          BACKEND_URL=$(gcloud run services describe deepguard-ai \
+            --region ${{ vars.GCP_REGION }} \
+            --format 'value(status.url)')
+          curl -sf "$BACKEND_URL/health" && echo "Backend healthy"
+      - name: Verify frontend reachable
+        run: |
+          curl -sf "${{ vars.FRONTEND_URL }}" && echo "Frontend reachable"

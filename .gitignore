@@ -15,6 +15,7 @@ htmlcov/
 
 # ---------- Virtual Environments ----------
 .venv/
+.venv-1/
 venv/
 env/
 
@@ -31,16 +32,6 @@ logs/
 uploads/
 app/uploads/
 app/logs/
-
-# ---------- HuggingFace / Models ----------
-.cache/
-.cache/huggingface/
-model_cache/
-*.pt
-*.pth
-*.onnx
-*.bin
-*.safetensors
 
 # ---------- Google ADK ----------
 .adk/
@@ -76,16 +67,11 @@ Thumbs.db
 # ---------- Docker ----------
 docker-compose.override.yml
 
+# ---------- Evaluation Dataset (keep structure, never commit media) ----------
+eval_dataset/images/*/[!.]*
+eval_dataset/videos/*/[!.]*
+
 # ---------- Temporary ----------
 *.tmp
 *.bak
 *.swp
-
-# ---------- Keep Important Files ----------
-!.env.example
-!requirements.txt
-!pyproject.toml
-!package.json
-!package-lock.json
-!README.md
-!LICENSE

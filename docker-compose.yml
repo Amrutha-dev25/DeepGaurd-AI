@@ -10,17 +10,19 @@ services:
       - "8090:8090"
     environment:
       - GOOGLE_API_KEY=${GOOGLE_API_KEY}
-      - GOOGLE_GENAI_USE_VERTEXAI=${GOOGLE_GENAI_USE_VERTEXAI:-False}
-      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.5-flash}
+      - SIGHTENGINE_API_USER=${SIGHTENGINE_API_USER}
+      - SIGHTENGINE_API_SECRET=${SIGHTENGINE_API_SECRET}
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - PRIMARY_API_KEY=${PRIMARY_API_KEY}
     volumes:
-      - ./deepguard-ai/app/uploads:/app/app/uploads
-      - ./deepguard-ai/app/logs:/app/app/logs
+      - ./deepguard-ai/backend/app/uploads:/app/backend/app/uploads
+      - ./deepguard-ai/backend/app/logs:/app/backend/app/logs
 
   frontend:
     image: node:20-alpine
     working_dir: /app
     volumes:
-      - ./ai-deepfake-forensics-lab:/app
+      - ./deepguard-ai/frontend:/app
     ports:
       - "5173:5173"
       - "3000:3000"
