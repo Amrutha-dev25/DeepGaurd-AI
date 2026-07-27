@@ -976,8 +976,18 @@ async def _run_analysis_with_fallback(
     else:
         logger.info("Analysis Fallback 3 (Gemini) skipped — not configured")
 
-    # ── Fallback 4: Deterministic fusion (last resort) ────────────
-    logger.info("Trying Deterministic fusion (last resort)")
+    # ── Fallback 4: Evidence-based deterministic (last resort) ───
+    logger.info("Trying evidence-based deterministic (last resort)")
+    verdict = {
+        "verdict": "inconclusive",
+        "confidence": 0.5,
+        "evidence": "All primary and fallback analysis providers unavailable. "
+                    "Verdict is inconclusive by default.",
+        "key_indicators": ["Analysis pipeline degraded — no provider succeeded"],
+    }
+    model_used = "deterministic"
+    fallback_used = True
+    logger.info("Deterministic analysis fallback: inconclusive (conf=0.5)")
 
     return verdict, model_used, fallback_used
 

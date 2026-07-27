@@ -27,6 +27,18 @@
 - **Degraded**: 13/17 (76.5%)
 - **Full**: 0/3 (0.0%)
 
+## Post-Fix Video Comparison
+
+See [`results_video.md`](results_video.md) for the full before/after comparison.
+
+### Bug Fixes Applied
+
+| Fix | Status | Detail |
+|-----|--------|--------|
+| **415 MIME detection** | ✅ Fixed | `_detect_mime()` now falls through to extension-based detection when libmagic returns `application/octet-stream`. Both previously-blocked MP4 files (vid7_f, vid9_f) now pass MIME checks. |
+| **model="none" → deterministic** | ✅ Applied | When Sightengine + all LLM fallbacks fail, returns `model="deterministic"` with `confidence=0.5` instead of `model="none"` with `confidence=0.0`. |
+| **Frame-level diagnostics** | ✅ Added | Sightengine normalized verdict now includes `raw_result_keys`, `deepfake_prob`, and `genai_prob` fields for per-frame debugging. |
+
 ## Per-File Results
 
 | # | File | Type | GT | Verdict | Confidence | Model | Degraded | Pass | Latency |

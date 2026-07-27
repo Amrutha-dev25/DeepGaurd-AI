@@ -295,22 +295,32 @@ async def analyze(request: Request, file: UploadFile = File(...)):
 # ── Helpers ───────────────────────────────────────────────────────────
 
 def _detect_mime(file_location: Path, content_type: str | None) -> str | None:
+    # Priority 1: libmagic (magic bytes detection)
+    magic_mime = None
     try:
         import magic
-        m = magic.from_file(str(file_location), mime=True)
-        if m:
-            return m
+        magic_mime = magic.from_file(str(file_location), mime=True)
     except Exception:
         pass
-    if content_type:
+    if magic_mime and magic_mime in ALLOWED_MIME_TYPES:
+        return magic_mime
+
+    # Priority 2: HTTP Content-Type header
+    if content_type and content_type in ALLOWED_MIME_TYPES:
         return content_type
+
+    # Priority 3: PIL image format detection
     try:
         with Image.open(file_location) as img:
             fmt = img.format
         _MAP = {"PNG": "image/png", "JPEG": "image/jpeg", "WEBP": "image/webp"}
-        return _MAP.get(fmt)
+        m = _MAP.get(fmt)
+        if m:
+            return m
     except Exception:
         pass
+
+    # Priority 4: Extension-based fallback
     ext = file_location.suffix.lower()
     _EXT_MAP = {
         ".jpg": "image/jpeg", ".jpeg": "image/jpeg",

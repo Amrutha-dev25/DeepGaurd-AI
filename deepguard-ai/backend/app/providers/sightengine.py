@@ -313,6 +313,9 @@ def _normalize_verdict(sightengine_result: dict[str, Any]) -> dict[str, Any]:
         "forensic_observations": forensic_obs,
         "supporting_evidence": supporting,
         "conflicting_evidence": [],
+        "raw_result_keys": list(sightengine_result.keys()),
+        "deepfake_prob": round(float(sightengine_result.get("deepfake", {}).get("prob", 0)), 4),
+        "genai_prob": round(float(sightengine_result.get("genai", {}).get("prob", 0)), 4),
         "limitations": (
             "Sightengine analysis combines deepfake (face-swap) and genai "
             "(fully-generated) model scores from a single API call. "

@@ -51,7 +51,9 @@ This is the single largest accuracy gap in DeepGuard AI today.
 | Videos   | **30%** (3/10) |
 | **Overall** | **65%** (13/20) |
 
-*Source: [`eval_dataset/results.md`](eval_dataset/results.md)*
+*Source: [`eval_dataset/results.md`](eval_dataset/results.md)* — see [`eval_dataset/results_video.md`](eval_dataset/results_video.md) for a detailed before/after comparison after the 415 MIME bugfix.
+
+> ⚠️ The 415 MIME detection bug (where some MP4 files were rejected as `application/octet-stream`) has been fixed — previously blocked files now reach the pipeline. Video accuracy remains limited by Sightengine model false positives/negatives and provider timeout issues, not by the MIME check.
 
 **Why video accuracy is low:**
 
