@@ -12,6 +12,7 @@ backend/
 │   ├── agents/           # ADK agent definitions
 │   │   ├── router_agent.py
 │   │   ├── analysis_agent.py
+│   │   ├── supervisor_agent.py
 │   │   ├── report_agent.py
 │   │   └── provider_factory.py
 │   ├── guardrails/        # Input validation & security
@@ -52,14 +53,14 @@ backend/
 |---|---|
 | `app/api.py` | FastAPI entry — defines `POST /api/analyze`, sets up CORS, rate limiting (SlowAPI), logging, and delegates to `runner.py`. No business logic lives here. |
 | `app/config.py` | Pydantic `Settings` class reading from `.env`. All API keys, model names, endpoints, and feature flags are configured here. |
-| `app/runner.py` | ADK orchestrator. Runs deterministic preprocessing, then spins up isolated ADK sessions for Router → Analysis → Report agents, each with its own fallback chain. Writes audit entries. |
+| `app/runner.py` | ADK orchestrator. Runs deterministic preprocessing, then spins up isolated ADK sessions for Router → Analysis → Supervisor → Report agents, each with its own fallback chain. The Supervisor drives a bounded investigation loop. Writes audit entries. |
 
 ---
 
 ## Subdirectories
 
 ### `agents/`
-Four ADK agent definitions. The **router** selects the analysis path, the **analysis agent** performs the forensic assessment, the **report agent** structures the output, and `provider_factory.py` constructs LiteLlm model instances with fallback configuration.
+Five ADK agent definitions plus a provider factory. The **router** selects the analysis path, the **analysis agent** performs the forensic assessment, the **supervisor agent** drives the bounded investigation loop (decides CONCLUDE / GET_SECOND_OPINION / INCONCLUSIVE_STOP based on capability needs), the **report agent** structures the output, and `provider_factory.py` constructs LiteLlm model instances with fallback configuration.
 
 ### `guardrails/`
 Defense-in-depth. `validation.py` blocks dangerous uploads (path traversal, oversized files, wrong extensions, mismatched magic bytes). `injection.py` detects 30+ prompt injection patterns. `schema.py` validates LLM response structure before it reaches the user. `moderation.py` handles content policy checks.
@@ -95,6 +96,13 @@ User uploads file
        ▼
   Analysis Agent (ADK) — runs forensic tools + Sightengine + LLM fallback chain
        │
+       ▼
+  Evidence Sufficiency Gate — Sightengine ≥0.8? Evidence corroborated?
+       │  (CONCLUDE / Supervisor loop)
+       ▼
+  Supervisor Agent (ADK) — bounded investigation loop (max 2 rounds)
+       │  Decides CONCLUDE / GET_SECOND_OPINION / INCONCLUSIVE_STOP
+       │  based on capability requirements, not provider names
        ▼
   Report Agent (ADK) — structures findings into verdict, observations, recommendations
        │

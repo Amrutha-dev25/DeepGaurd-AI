@@ -25,7 +25,7 @@ app/
 |------|------|
 | `api.py` | Thin FastAPI layer — no business logic. Routes, CORS, rate limiting, logging setup. |
 | `config.py` | Single source of truth for all environment configuration via `pydantic-settings`. |
-| `runner.py` | ADK orchestrator — runs the 3-agent pipeline with full fallback chains per stage. |
+| `runner.py` | ADK orchestrator — runs the 4-agent pipeline (Router → Analysis → Supervisor → Report) with full fallback chains per stage and a bounded Supervisor investigation loop. |
 
 ## Execution Flow
 
@@ -35,15 +35,19 @@ POST /api/analyze
     → runner.run_pipeline()
       → Security Layer → Preprocessing → Forensic Context
         → Router Agent (classify media)
-          → Analysis Agent (Sightengine + LLM fallback → verdict)
-            → Report Agent (generate narrative report)
-              → Output Assembly (JSON + Markdown + PDF + audit)
+          → Analysis Agent (Sightengine + LLM fallback → initial verdict)
+            → Evidence Sufficiency Gate (CONCLUDE fast path / enter loop)
+              → Supervisor Agent (bounded max-2-round investigation loop)
+                → CONCLUDE → Report Agent (generate narrative report)
+                → GET_SECOND_OPINION → another Analysis round with specific capability
+                → INCONCLUSIVE_STOP → Report Agent
+                  → Output Assembly (JSON + Markdown + PDF + audit)
 ```
 
 ## Dependencies
 
 - **Framework**: FastAPI, Uvicorn, SlowAPI (rate limiting)
-- **ADK**: google-adk (3 agents with session isolation)
+- **ADK**: google-adk (4 agents with session isolation; Supervisor drives investigation loop)
 - **Computer Vision**: OpenCV, Pillow, NumPy
 - **Forensics**: exifread, imagehash, python-magic
 - **PDF**: fpdf2

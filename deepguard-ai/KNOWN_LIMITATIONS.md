@@ -103,14 +103,14 @@ This is purely a **frontend cosmetics** limitation. The backend analysis pipelin
 
 ## 6. No ML Ensemble / Classifier Fusion
 
-DeepGuard AI uses a **linear fallback chain**: try Sightengine first, and if it fails or is unavailable, try the next model in sequence. There is **no ensemble voting, weighted fusion, or meta-classifier** that combines signals from multiple models.
+DeepGuard AI uses a **Supervisor-driven investigation loop** that requests specific analysis capabilities until evidence converges, rather than running all models in parallel and fusing their outputs. There is **no ensemble voting, weighted fusion, or meta-classifier** that combines signals from multiple models simultaneously.
 
-**Why this exists:** The current architecture prioritizes simplicity and predictable latency. Ensemble methods require:
-- All models to run in parallel (increasing cost and latency)
+**Why this exists:** The current architecture prioritizes bounded cost and predictable latency. The Supervisor loop (max 2 rounds) requests one provider at a time, only when the evidence sufficiency gate detects conflict or uncertainty. True ensemble methods would require:
+- All models to run in parallel (increasing cost and latency on every request)
 - A trained fusion classifier (requiring labeled data and ML engineering)
 - Normalized confidence scoring across heterogeneous models (Sightengine scores are not directly comparable to LLM probabilities)
 
-**Effect on accuracy:** When Sightengine is available, the pipeline performs well (100% on images). But in fallback scenarios, the system relies entirely on a single fallback model rather than combining signals from multiple models to reach a consensus.
+**Effect on accuracy:** When Sightengine is available and the evidence is clear (≥0.8 or corroborated by forensics), the pipeline returns immediately with high accuracy. When evidence is conflicting, the Supervisor loop can request up to 2 additional opinions from different capability profiles before declaring inconclusive. This is not true ensemble fusion but provides multi-model investigation without the parallel cost.
 
 ---
 

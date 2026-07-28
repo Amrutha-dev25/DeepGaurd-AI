@@ -24,7 +24,7 @@ flowchart LR
 
 ## Deployment Methods
 
-- **Cloud Run (Backend)** — Single container running FastAPI with three in-process ADK agents (Router → Analysis → Report). Deployed via `gcloud run deploy`. Scales to zero when idle. No inter-service RPC — agents communicate in-process, keeping latency low.
+- **Cloud Run (Backend)** — Single container running FastAPI with four in-process ADK agents (Router → Analysis → Supervisor → Report). Deployed via `gcloud run deploy`. Scales to zero when idle. No inter-service RPC — agents communicate in-process, keeping latency low. The Supervisor agent drives a bounded investigation loop (max 2 rounds) for conflicting evidence.
 
 - **Vercel (Frontend)** — Static site built with `npm run build` from `frontend/`. Connected via GitHub integration; auto-deploys on every push to `main`. Preview deployments per branch.
 

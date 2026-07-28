@@ -32,7 +32,7 @@
 
 ## 📋 Project Overview
 
-**DeepGuard AI** is a multi-agent deepfake detection system built on Google's **ADK (Agent Development Kit)**. It uses a pipeline of three specialized AI agents — **Router**, **Analysis**, and **Report** — to detect manipulated media (images and videos) with high accuracy and explainability.
+**DeepGuard AI** is a multi-agent deepfake detection system built on Google's **ADK (Agent Development Kit)**. It uses a pipeline of four specialized AI agents — **Router**, **Analysis**, **Supervisor**, and **Report** — to detect manipulated media (images and videos) with high accuracy and explainability. The Supervisor agent drives a bounded investigation loop (max 2 rounds) that requests specific analysis capabilities until the evidence converges or no further resolution is possible.
 
 ### The Problem
 
@@ -53,11 +53,11 @@ DeepGuard meets these needs with a **modular, agent-driven architecture**. Each 
 
 | Feature | Description |
 |---------|-------------|
-| 🤖 **AI Agent Pipeline** | Three Google ADK agents (Router → Analysis → Report) with isolated sessions |
+| 🤖 **AI Agent Pipeline** | Four Google ADK agents (Router → Analysis → Supervisor → Report) with isolated sessions; Supervisor drives a bounded investigation loop for conflicting evidence |
 | 🔄 **Multi-Provider LLM Fallback** | Router & Report agents fall through Groq → NVIDIA NIM → Gemini → Deterministic |
 | 🔌 **Sightengine Integration** | REST API-based deepfake/genAI detection as the analysis primary |
 | 🔬 **Hybrid Forensic Analysis** | 8+ computer vision tools: ELA, FFT, noise profiling, EXIF, JPEG artifact analysis, clone detection, wavelet decomposition, edge detection |
-| ⚖️ **Confidence Gate + Fusion** | `≥0.8` confidence returns directly; `<0.8` triggers LLM reconciliation of forensic + API signals |
+| ⚖️ **Evidence Sufficiency Gate + Supervisor Loop** | Sightengine `≥0.8` returns directly; `<0.8` enters evidence sufficiency gate; conflicting evidence triggers Supervisor-driven multi-round investigation with capability-based fallback (max 2 rounds) |
 | 🧩 **Fallback Architecture** | Every provider stage has 3+ fallbacks; network failures, rate limits, and timeouts are handled transparently |
 | 🖥️ **Interactive Frontend** | React 19 + TypeScript + Tailwind CSS dashboard for file upload, result visualization, and report download |
 | 📄 **Multi-Format Reports** | Structured JSON, formatted Markdown, and printable PDF outputs with audit trail |
@@ -77,12 +77,18 @@ flowchart LR
     PP --> FC[Forensic Context<br/>ELA · FFT · Noise · EXIF<br/>JPEG Artifacts · Clone<br/>Wavelet · Edge Detection]
     FC --> RA[Router Agent<br/>Media Classification]
     RA --> AA[Analysis Agent<br/>Deepfake Scoring]
-    AA --> RepA[Report Agent<br/>Explanation + Report]
+    AA -->|verdict + evidence| EG{Evidence Sufficiency Gate}
+    EG -->|sufficient| SV{Supervisor Agent<br/>Bounded Loop ≤2 rounds}
+    EG -->|Sightengine ≥0.8| SV
+    SV -->|CONCLUDE| RepA[Report Agent<br/>Explanation + Report]
+    SV -->|GET_SECOND_OPINION| AA
+    SV -->|INCONCLUSIVE_STOP| RepA
     RepA --> OA[Output Assembly<br/>JSON / MD / PDF]
     OA --> R[Response]
 
     style RA fill:#4a90d9,color:#fff
     style AA fill:#e65c4f,color:#fff
+    style SV fill:#ff9800,color:#fff
     style RepA fill:#4caf50,color:#fff
 ```
 
@@ -106,17 +112,26 @@ flowchart LR
 **Analysis Agent:**
 
 ```mermaid
-flowchart LR
+flowchart TD
     A1[Sightengine API<br/>Deepfake + GenAI] -->|score ≥ 0.8| RETURN[Return Directly]
-    A1 -->|score < 0.8| RECONCILE[LLM Reconciliation]
-    A1 -->|fail| A2[NVIDIA NIM<br/>Omni Llama]
+    A1 -->|score < 0.8| GATE{Evidence Sufficiency Gate}
+    GATE -->|clear direction + corroboration| CONV[CONCLUDE]
+    GATE -->|conflict / uncertainty| SUP[Supervisor Agent<br/>Bounded Loop 1-2 rounds]
+    SUP -->|CONCLUDE| CONV
+    SUP -->|GET_SECOND_OPINION| A2[NVIDIA NIM<br/>Omni Llama]
+    SUP -->|INCONCLUSIVE_STOP| INC[Inconclusive]
+    A1 -->|fail| A2
     A2 -->|fail| A3[NVIDIA NIM<br/>Nano Llama]
     A3 -->|fail| A4[Gemini 2.5 Flash<br/>* conditional]
-    A4 -->|fail| INC[Inconclusive]
-    RECONCILE --> A2
+    A4 -->|fail| INC
+    A2 --> GATE
+    A3 --> GATE
+    A4 --> GATE
     style A1 fill:#00bcd4,color:#fff
     style RETURN fill:#4caf50,color:#fff
-    style RECONCILE fill:#ff9800,color:#fff
+    style GATE fill:#ff9800,color:#fff
+    style SUP fill:#ff5722,color:#fff
+    style CONV fill:#4caf50,color:#fff
     style INC fill:#f44336,color:#fff
 ```
 
