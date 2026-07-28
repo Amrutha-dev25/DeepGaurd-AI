@@ -19,6 +19,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from dataclasses import dataclass
 from typing import Any
 
 from google.adk.agents import Agent
@@ -33,6 +34,16 @@ try:
 except ImportError:
     pass
 
+from app.agents.supervisor_agent import (
+    CAPABILITY_MAP,
+    CAPABILITY_TO_AGENT_KEY,
+    InvestigationState,
+    build_supervisor_context,
+    create_supervisor_agent,
+    create_cerebras_supervisor_agent,
+    create_gemini_supervisor_agent,
+    _extract_supervisor_json,
+)
 from app.config import settings
 from app.guardrails.injection import security_checkpoint
 from app.guardrails.validation import validate_file
@@ -93,7 +104,47 @@ def _deterministic_routing(mime_type: str, pipeline_type: str) -> dict[str, Any]
     }
 
 
+_ROUTER_REQUIRED_KEYS: set[str] = {"file_type"}
+_ANALYSIS_REQUIRED_KEYS: set[str] = {"verdict"}
+
+
+def _router_json_valid(parsed: dict[str, Any] | None) -> bool:
+    """Check that parsed router JSON has the minimum required keys.
+
+    Prevents accepting tool-call fragments or cut-off responses as
+    valid routing decisions.
+    """
+    if parsed is None:
+        return False
+    return _ROUTER_REQUIRED_KEYS.issubset(parsed.keys())
+
+
+def _analysis_json_valid(parsed: dict[str, Any] | None) -> bool:
+    """Check that parsed analysis JSON has the minimum required keys."""
+    if parsed is None:
+        return False
+    return _ANALYSIS_REQUIRED_KEYS.issubset(parsed.keys())
+
+
 # ── Robust isolated agent runner ──────────────────────────────────────
+
+
+@dataclass
+class AgentResult:
+    """Explicit result from _run_agent_isolated.
+
+    `text` contains all collected text from the agent's response.
+    `success` is True only when the call completed and produced content.
+    Neither field is ambiguous: success=False with empty text = failure;
+    success=True with empty text = valid empty response.
+    """
+    text: str = ""
+    success: bool = False
+
+
+def _new_request_id() -> str:
+    return f"req_{uuid.uuid4().hex[:16]}"
+
 
 async def _run_agent_isolated(
     agent: Agent,
@@ -101,15 +152,19 @@ async def _run_agent_isolated(
     image_bytes: bytes | None = None,
     mime_type: str = "image/jpeg",
     timeout: int = 120,
-) -> str:
+) -> AgentResult:
     """Run an agent in a fresh session — no conversation-history leakage.
 
     Each call creates its own InMemorySessionService, session, and Runner,
     so the agent receives ONLY its own prompt + media — nothing from prior
     stages.
 
-    Returns the agent's response text, or raises on non-rate-limit errors.
-    Rate-limit errors are re-raised as RateLimitError for upstream handling.
+    Collects text from ALL events in the stream (does not break on the first
+    final event). Preserves all part types (text, function_call, inline_data,
+    function_response, code_execution_result).
+
+    Returns AgentResult with collected text and success/failure.
+    Raises on errors (RateLimitError for rate limits, other exceptions propagate).
     """
     request_id = _new_request_id()
     session_service = InMemorySessionService()
@@ -128,7 +183,11 @@ async def _run_agent_isolated(
     if image_bytes:
         parts.append(genai_types.Part.from_bytes(data=image_bytes, mime_type=mime_type))
     content = genai_types.Content(role="user", parts=parts)
-    result_text = ""
+
+    collected_text = ""
+    collected_parts: list[dict[str, str]] = []
+    events_seen = 0
+
     agen = runner.run_async(
         user_id=request_id,
         session_id=session.id,
@@ -136,30 +195,62 @@ async def _run_agent_isolated(
     )
     try:
         async for event in agen:
-            if event.is_final_response():
-                if event.content and event.content.parts:
-                    result_text = "".join(p.text or "" for p in event.content.parts)
-                break
+            events_seen += 1
+            if event.content and event.content.parts:
+                for p in event.content.parts:
+                    if p.text:
+                        collected_text += p.text
+                    # Preserve every non-None part field
+                    part_fields: dict[str, str] = {}
+                    for field in ("text", "inline_data", "function_call",
+                                  "function_response", "code_execution_result"):
+                        val = getattr(p, field, None)
+                        if val is not None:
+                            part_fields[field] = str(val)[:500]
+                    if part_fields:
+                        collected_parts.append(part_fields)
+            # Do NOT break on first final event — iterate entire stream
     except (asyncio.CancelledError, GeneratorExit):
-        logger.warning("Provider '%s' cancelled — switching fallback.", agent.name)
+        logger.warning("Provider '%s' cancelled.", agent.name)
         raise
     except RuntimeError as exc:
+        logger.warning("Provider '%s' runtime error: %s",
+                       agent.name, str(exc).split('\n')[0][:200])
         if _is_rate_limit_error(exc):
-            logger.warning("Provider '%s' quota exhausted — switching fallback.", agent.name)
             raise RateLimitError(str(exc))
-        logger.warning("Provider '%s' runtime error — switching fallback: %s", agent.name, str(exc).split('\n')[0][:200])
         raise
     except Exception as exc:
+        logger.warning("Provider '%s' failed: %s",
+                       agent.name, str(exc).split('\n')[0][:200])
         if _is_rate_limit_error(exc):
-            logger.warning("Provider '%s' quota exhausted — switching fallback.", agent.name)
             raise RateLimitError(str(exc))
-        logger.warning("Provider '%s' failed — switching fallback: %s", agent.name, str(exc).split('\n')[0][:200])
+        raise  # All exceptions propagate — nothing is swallowed
     finally:
         try:
             await agen.aclose()
         except GeneratorExit:
             pass
-    return result_text
+
+    success = bool(collected_text.strip()) or bool(collected_parts)
+
+    # Debug dump of final result
+    import json as _jd
+    _model = str(getattr(getattr(agent, 'model', None), 'model', 'unknown'))
+    _text_preview = collected_text[:800] + "..." if len(collected_text) > 800 else collected_text
+    print(f"\n=== ADK AGENT RESULT (agent={agent.name}) ===")
+    print(_jd.dumps({
+        "agent": agent.name,
+        "model": _model,
+        "events_seen": events_seen,
+        "collected_text_len": len(collected_text),
+        "success": success,
+        "text_preview": _text_preview,
+        "part_count": len(collected_parts),
+        "part_types": list({k for p in collected_parts for k in p}),
+    }, indent=2, default=str))
+    print("=== END ADK AGENT RESULT ===\n")
+
+    return AgentResult(text=collected_text, success=success)
 
 
 class RateLimitError(Exception):
@@ -288,10 +379,10 @@ async def _run_agent_safe(
     """
     for attempt in range(1 + max_retries_on_rate_limit):
         try:
-            result = await _run_agent_isolated(
+            result: AgentResult = await _run_agent_isolated(
                 agent, text, image_bytes, mime_type, timeout,
             )
-            return result, True
+            return result.text, result.success
         except RateLimitError:
             if attempt < max_retries_on_rate_limit:
                 logger.info("Rate limited, retry %d/%d", attempt + 1, max_retries_on_rate_limit)
@@ -482,14 +573,33 @@ def _now_utc() -> str:
 
 
 def _extract_json(text: str) -> dict[str, Any] | None:
-    match = re.search(r"\{[\s\S]*\}", text)
-    if match:
-        try:
-            return json.loads(match.group())
-        except json.JSONDecodeError:
-            logger.warning("Found braces but invalid JSON in response: %s...", text[:200])
-            return None
-    logger.warning("No JSON found in response: %s...", text[:200])
+    """Extract JSON from LLM response using bracket-counting.
+
+    Scans forward from each `{` and takes the first substring that
+    balances brackets AND parses via json.loads.  Avoids the greedy
+    `.*` bug that spans from a stray `{` in reasoning text to the
+    real closing `}`.
+    """
+    if not text or not text.strip():
+        return None
+    raw = text.strip()
+    for i, ch in enumerate(raw):
+        if ch != "{":
+            continue
+        depth = 0
+        for j in range(i, len(raw)):
+            c = raw[j]
+            if c == "{":
+                depth += 1
+            elif c == "}":
+                depth -= 1
+                if depth == 0:
+                    candidate = raw[i:j+1]
+                    try:
+                        return json.loads(candidate)
+                    except json.JSONDecodeError:
+                        break
+    logger.warning("No valid JSON found: %s...", raw[:200])
     return None
 
 
@@ -732,12 +842,13 @@ async def _run_router_with_fallback(
         )
         if ok and router_text.strip():
             parsed = _extract_json(router_text)
-            if parsed is not None:
+            if _router_json_valid(parsed):
                 routing = parsed
                 model_used = settings.router_model
                 logger.info("Router Primary succeeded: %s", routing)
                 return routing, model_used, fallback_used
-            logger.warning("Router Primary (Groq) returned no JSON")
+            logger.warning("Router Primary (Groq) returned invalid/missing keys: %s",
+                           parsed.keys() if parsed else "None")
         logger.warning("Router Primary (Groq) FAILED")
     except Exception as exc:
         logger.warning("Router Primary (Groq) FAILED: %s", str(exc).split('\n')[0][:200])
@@ -750,13 +861,14 @@ async def _run_router_with_fallback(
         )
         if ok and router_text.strip():
             parsed = _extract_json(router_text)
-            if parsed is not None:
+            if _router_json_valid(parsed):
                 routing = parsed
                 model_used = settings.router_fallback2_model
                 fallback_used = True
                 logger.info("Router Fallback 1 (NVIDIA) succeeded: %s", routing)
                 return routing, model_used, fallback_used
-            logger.warning("Router Fallback 1 (NVIDIA) returned no JSON")
+            logger.warning("Router Fallback 1 (NVIDIA) returned invalid/missing keys: %s",
+                           parsed.keys() if parsed else "None")
         logger.warning("Router Fallback 1 (NVIDIA) FAILED")
     except Exception as exc:
         logger.warning("Router Fallback 1 (NVIDIA) FAILED: %s", str(exc).split('\n')[0][:200])
@@ -770,13 +882,14 @@ async def _run_router_with_fallback(
             )
             if ok and router_text.strip():
                 parsed = _extract_json(router_text)
-                if parsed is not None:
+                if _router_json_valid(parsed):
                     routing = parsed
                     model_used = settings.router_fallback1_model
                     fallback_used = True
                     logger.info("Router Fallback 2 (Gemini) succeeded: %s", routing)
                     return routing, model_used, fallback_used
-                logger.warning("Router Fallback 2 (Gemini) returned no JSON")
+                logger.warning("Router Fallback 2 (Gemini) returned invalid/missing keys: %s",
+                               parsed.keys() if parsed else "None")
             logger.warning("Router Fallback 2 (Gemini) FAILED")
         except Exception as exc:
             logger.warning("Router Fallback 2 (Gemini) FAILED: %s", str(exc).split('\n')[0][:200])
@@ -791,6 +904,258 @@ async def _run_router_with_fallback(
     return routing, "deterministic", fallback_used
 
 
+# ── Evidence sufficiency gate ─────────────────────────────────────────
+
+# Reference ranges (calibration anchors, from analysis_agent.py)
+_AUTHENTIC_RANGES = {
+    "ela_mean_difference": (0.05, 0.50),
+    "noise_variance": (100, 1500),
+    "fft_high_freq_ratio": (0.001, 0.05),
+    "compression_quality": (75, 98),
+    "dct_coefficient_mean": (0.5, 5.0),
+    "wavelet_hh_energy": (0.001, 0.05),
+    "edge_intensity_canny": (0.01, 0.10),
+}
+
+
+def _forensics_corroborate(se_verdict: dict, forensic_context: dict, preprocessing: dict) -> bool:
+    """Check whether forensic evidence independently points in the same
+    direction as Sightengine's verdict.
+
+    Returns True if a majority (≥3 of available signals) sit outside
+    the authentic range in the same direction as Sightengine's verdict.
+    This is corroboration of an already-trusted signal, not a replacement.
+    """
+    se_direction = se_verdict.get("verdict")  # "real" or "fake"
+    if se_direction not in ("real", "fake"):
+        return False
+
+    # Collect signals. Each is a (value, low, high) tuple meaning
+    # that values below low → fake-signal, above high → fake-signal.
+    # For "real" direction we invert the comparison.
+    signals: list[tuple[float | None, float, float, str]] = []
+
+    # ELA: low is normal, high ELA suggests tampering
+    ela = (forensic_context or {}).get("ela", {})
+    ela_val = ela.get("mean_difference")
+    signals.append((ela_val, 0.05, 0.50, "ela_mean_difference"))
+
+    # Noise: low noise (smoothing) or very high noise both suspicious
+    noise = (forensic_context or {}).get("noise", {})
+    noise_val = noise.get("noise_variance")
+    signals.append((noise_val, 100, 1500, "noise_variance"))
+
+    # FFT: high high-freq ratio suggests upsampling / AI artifacts
+    fft = (forensic_context or {}).get("fft", {})
+    fft_val = fft.get("high_freq_ratio")
+    signals.append((fft_val, 0.001, 0.05, "fft_high_freq_ratio"))
+
+    # Compression: low quality can indicate re-encoding
+    comp = (forensic_context or {}).get("compression", {})
+    comp_val = comp.get("estimated_quality")
+    if comp_val is not None:
+        try:
+            comp_val = float(comp_val)
+        except (TypeError, ValueError):
+            comp_val = None
+    signals.append((comp_val, 75, 98, "compression_quality"))
+
+    # DCT: high coefficient mean suggests frequency-domain anomaly
+    dct_val = (preprocessing or {}).get("dct_mean")
+    signals.append((dct_val, 0.5, 5.0, "dct_coefficient_mean"))
+
+    # Wavelet HH: high HH energy suggests injected high-freq noise
+    wv = (preprocessing or {}).get("wavelet", {})
+    hh_val = wv.get("HH")
+    signals.append((hh_val, 0.001, 0.05, "wavelet_hh_energy"))
+
+    # Edge intensity (Canny): very low (too smooth) or very high (too sharp)
+    edges = (preprocessing or {}).get("edge_intensity", {})
+    canny_val = edges.get("canny") if isinstance(edges, dict) else None
+    signals.append((canny_val, 0.01, 0.10, "edge_intensity_canny"))
+
+    agreeing = 0
+    total = 0
+    for val, low, high, name in signals:
+        if val is None:
+            continue
+        total += 1
+        try:
+            val = float(val)
+        except (TypeError, ValueError):
+            continue
+        # For "fake" verdict: values outside authentic range agree
+        # For "real" verdict:  values inside authentic range agree
+        outside = val < low or val > high
+        if se_direction == "fake":
+            if outside:
+                agreeing += 1
+        else:  # real
+            if not outside:
+                agreeing += 1
+
+    if total == 0:
+        return False
+
+    majority = total >= 3 and agreeing >= total * 0.6
+    logger.info("Forensics corroborate: se_direction=%s signals=%d agreeing=%d majority=%s",
+                se_direction, total, agreeing, majority)
+    return majority
+
+
+def evidence_sufficient(se_verdict: dict, forensic_context: dict, preprocessing: dict) -> bool:
+    """Decide whether Sightengine evidence alone or with corroboration
+    is sufficient to return a verdict without an LLM call.
+
+    Case A: Sightengine alone is confident enough (>=0.8) — existing.
+    Case B: Sightengine is moderately confident (0.55–0.8) AND forensic
+            evidence independently corroborates the direction.
+    """
+    se_conf = se_verdict.get("confidence", 0.0)
+
+    # Case A — existing behaviour, keep it
+    if se_conf >= 0.8:
+        return True
+
+    # Case B — corroboration-extended gate
+    if 0.55 <= se_conf < 0.8:
+        return _forensics_corroborate(se_verdict, forensic_context, preprocessing)
+
+    return False
+
+
+def _best_evidence_entry(state: "InvestigationState") -> tuple[dict | None, str]:
+    """Find the best evidence entry from the evidence table.
+
+    Returns (entry, capability_id) of the entry with the highest
+    confidence >= 0.8, or (None, "") if none qualifies.
+    """
+    if not state.evidence_table:
+        return None, ""
+    best = None
+    best_conf = -1.0
+    for entry in state.evidence_table:
+        conf = entry.get("confidence", 0) or 0
+        if conf >= 0.8 and conf > best_conf:
+            best = entry
+            best_conf = conf
+    if best:
+        return best, best.get("capability", "")
+    return None, ""
+
+
+def _build_verdict_from_entry(entry: dict) -> dict:
+    """Build a verdict dict from an evidence table entry."""
+    return {
+        "verdict": entry.get("verdict", "inconclusive"),
+        "confidence": entry.get("confidence", 0.5),
+        "analysis_summary": entry.get("analysis_summary", ""),
+        "evidence": "",
+        "key_indicators": entry.get("conflicting_evidence", []),
+    }
+
+
+def _check_convergence(state: "InvestigationState") -> str | None:
+    """Check whether multiple evidence entries agree or disagree.
+
+    Returns 'AGREE', 'SPLIT', 'PARTIAL', or None (insufficient data).
+    Does NOT return CONCLUDE/INCONCLUSIVE_STOP — that is the supervisor's job.
+    Needs at least 2 entries to produce a signal.
+    """
+    if len(state.evidence_table) < 2:
+        return None
+    directions: set[str] = set()
+    for entry in state.evidence_table:
+        v = entry.get("verdict", "")
+        if v in ("fake", "real"):
+            directions.add(v)
+    if len(directions) == 1:
+        return "AGREE"
+    if len(directions) >= 2:
+        return "SPLIT"
+    return "PARTIAL"
+
+
+def _build_investigation_trace(state: "InvestigationState") -> dict:
+    """Build the trace dict returned in the API response."""
+    return {
+        "rounds_completed": state.rounds_completed,
+        "providers_tried": list(state.providers_tried),
+        "evidence_table": [
+            {
+                "round": e.get("round", 0),
+                "capability": e.get("capability", "unknown"),
+                "verdict": e.get("verdict", "unknown"),
+                "confidence": e.get("confidence", 0),
+                "analysis_summary": e.get("analysis_summary", "")[:200] if e.get("analysis_summary") else "",
+            }
+            for e in state.evidence_table
+        ],
+        "reasoning_log": list(state.reasoning_log),
+        "converged": state.converged,
+    }
+
+
+def _capability_to_model_name(capability_id: str | None) -> str:
+    """Resolve a capability ID to a model name string."""
+    if not capability_id:
+        return "deterministic"
+    cap_to_model = {
+        "sightengine": "sightengine",
+        "large_multimodal_reasoning": settings.primary_model,
+        "lightweight_multimodal_verifier": settings.fallback1_model,
+        "general_multimodal_verifier": settings.fallback2_model,
+    }
+    return cap_to_model.get(capability_id, "deterministic")
+
+
+# ── Run supervisor with fallback chain ────────────────────────────────
+
+
+async def _run_supervisor_with_fallback(
+    supervisor_context: str,
+    cerebras_agent: Agent | None,
+    gemini_agent: Agent | None,
+    timeout: int,
+    max_retries: int,
+) -> tuple[str, bool, str]:
+    """Run supervisor with Cerebras → Gemini fallback.
+
+    Mirrors _run_router_with_fallback pattern. Returns (text, ok, model_used).
+    If all providers fail, (text="", ok=False, model_used="none") — caller
+    handles best-evidence fallback.
+    """
+    # Primary: Cerebras
+    if cerebras_agent is not None:
+        logger.info("Trying Supervisor Primary: Cerebras (%s)", settings.supervisor_primary_model)
+        try:
+            text, ok = await _run_agent_safe(
+                cerebras_agent, supervisor_context,
+                timeout=timeout, max_retries_on_rate_limit=max_retries,
+            )
+            if ok and text.strip():
+                return text, True, "cerebras"
+            logger.warning("Supervisor Primary (Cerebras) returned empty")
+        except Exception as exc:
+            logger.warning("Supervisor Primary (Cerebras) FAILED: %s", str(exc).split('\n')[0][:200])
+
+    # Fallback: Gemini
+    if gemini_agent is not None:
+        logger.info("Trying Supervisor Fallback: Gemini (%s)", settings.supervisor_fallback_model)
+        try:
+            text, ok = await _run_agent_safe(
+                gemini_agent, supervisor_context,
+                timeout=timeout, max_retries_on_rate_limit=max_retries,
+            )
+            if ok and text.strip():
+                return text, True, "gemini"
+            logger.warning("Supervisor Fallback (Gemini) returned empty")
+        except Exception as exc:
+            logger.warning("Supervisor Fallback (Gemini) FAILED: %s", str(exc).split('\n')[0][:200])
+
+    return "", False, "none"
+
+
 # ── Run the analysis agent with fallback chain ──────────────────────────
 
 async def _run_analysis_with_fallback(
@@ -801,20 +1166,19 @@ async def _run_analysis_with_fallback(
     analysis_fb1: Agent,
     analysis_fb2: Agent,
     analysis_frames: list[bytes] | None = None,
-) -> tuple[dict[str, Any], str, bool]:
-    """Run Analysis Agent with Sightengine reconciliation -> NVIDIA Omni -> NVIDIA Nano -> Gemini.
+    forensic_context: dict[str, Any] | None = None,
+    preprocessing_result: dict[str, Any] | None = None,
+) -> tuple[dict[str, Any], str, bool, dict[str, Any]]:
+    """Run Analysis Agent with Supervisor-driven decision loop.
 
-    Primary:    Sightengine REST API (deepfake detection) — used as evidence for LLM reconciliation
-    Fallback 1: NVIDIA Nemotron Omni via LiteLlm
-    Fallback 2: NVIDIA Nemotron Nano VL via LiteLlm
-    Fallback 3: Gemini — only if ENABLE_GEMINI_FALLBACK=true
+    Replaces the fixed fallback chain with an evidence-driven,
+    cost-aware supervisor that reasons about capabilities (not
+    provider names) and decides CONCLUDE / GET_SECOND_OPINION /
+    INCONCLUSIVE_STOP.
 
-    For video files, analysis_frames contains all extracted key frames.
-    Sightengine analyzes all frames concurrently and aggregates worst-first.
-    LLM fallbacks receive only the first frame (image_for_analysis).
-
-    Each ADK fallback runs in its own isolated session, so no
-    conversation history leaks between attempts or from prior stages.
+    Sightengine ≥0.8 confidence gate is preserved as a fast path.
+    Max 2 supervisor rounds. Investigation trace is returned for
+    surfacing in the API response.
     """
     logger.info("RUNNING: %s", _RUNNER_FILE)
     logger.info("Function: _run_analysis_with_fallback()")
@@ -827,14 +1191,35 @@ async def _run_analysis_with_fallback(
     model_used = "none"
     fallback_used = False
 
-    # ── Primary: Sightengine REST API ───────────────────────────────
+    # Agent lookup by capability key
+    agent_map: dict[str, Agent] = {
+        "analysis_agent": analysis_agent,
+        "analysis_fb1": analysis_fb1,
+        "analysis_fb2": analysis_fb2,
+    }
+
+    model_name_map: dict[str, str] = {
+        "analysis_agent": settings.primary_model,
+        "analysis_fb1": settings.fallback1_model,
+        "analysis_fb2": settings.fallback2_model,
+    }
+
+    # Create supervisor agents: Cerebras (primary) + Gemini (fallback)
+    cerebras_supervisor = create_cerebras_supervisor_agent()
+    gemini_supervisor = create_gemini_supervisor_agent()
+    # Keep the legacy agent as a last resort if neither new one is available
+    supervisor_agent = cerebras_supervisor or gemini_supervisor or create_supervisor_agent()
+
+    # ── Investigation state ────────────────────────────────────────
+    state = InvestigationState()
+    state.reasoning_log = []
+
+    # ── Sightengine REST API ──────────────────────────────────────
     sightengine_was_configured = bool(settings.sightengine_api_user and settings.sightengine_api_secret)
     se_images = analysis_frames if analysis_frames else ([image_for_analysis] if image_for_analysis else None)
-    logger.info("SIGHTENGINE CHECK: sightengine_was_configured=%s se_images=%s image_for_analysis=%s analysis_frames=%s",
+    logger.info("SIGHTENGINE CHECK: sightengine_was_configured=%s se_images=%s",
                 sightengine_was_configured,
-                "present (%d images)" % len(se_images) if se_images else "None",
-                "%d bytes" % len(image_for_analysis) if image_for_analysis else "None",
-                "present (%d frames)" % len(analysis_frames) if analysis_frames else "None")
+                "present (%d images)" % len(se_images) if se_images else "None")
     sightengine_verdict: dict[str, Any] | None = None
     if sightengine_was_configured and se_images:
         logger.info("Trying Sightengine with %d image(s)...", len(se_images))
@@ -855,8 +1240,7 @@ async def _run_analysis_with_fallback(
                         json.dumps(se_verdict, indent=2, default=str))
             if se_verdict.get("verdict") not in ("error",):
                 sightengine_verdict = se_verdict
-                logger.info("Sightengine succeeded: verdict=%s confidence=%.2f frames=%d — "
-                            "prepending result for LLM reconciliation",
+                logger.info("Sightengine succeeded: verdict=%s confidence=%.2f frames=%d",
                             sightengine_verdict.get("verdict", "?"),
                             sightengine_verdict.get("confidence", 0),
                             len(se_images))
@@ -865,23 +1249,48 @@ async def _run_analysis_with_fallback(
                                se_verdict.get("error", "unknown"))
         except Exception as exc:
             logger.warning("Sightengine FAILED: %s", str(exc).split('\n')[0][:200])
+            print(f"\n=== SIGHTENGINE FAILED (will still enter supervisor loop) ===")
     else:
-        logger.info("Sightengine not configured or no image — skipping to fallback (configured=%s se_images=%s)",
+        logger.info("Sightengine not configured or no image (configured=%s se_images=%s)",
                     sightengine_was_configured, bool(se_images))
 
-    # ── Build reconciliation prompt if Sightengine succeeded ─────────
+    # ── Sightengine fast path: ≥0.8 confidence → return directly ──
     if sightengine_verdict is not None:
         se_confidence = sightengine_verdict.get("confidence", 0.0)
         if se_confidence >= 0.8:
-            # Clear verdict (≥80% confident in either direction) — return directly
-            logger.info("Sightengine clear verdict (conf=%.4f >= 0.8) — returning directly, no LLM reconciliation",
+            logger.info("Sightengine clear verdict (conf=%.4f >= 0.8) — returning directly",
                         se_confidence)
-            verdict = sightengine_verdict
-            model_used = "sightengine"
-            return verdict, model_used, fallback_used
-        # Borderline confidence — reconcile with LLM
-        logger.info("Sightengine borderline verdict (conf=%.4f < 0.8) — running LLM reconciliation",
-                    se_confidence)
+            state.reasoning_log.append(
+                f"Sightengine returned verdict={sightengine_verdict.get('verdict')} "
+                f"conf={se_confidence:.2f} (≥0.8) — returned directly, no supervisor needed"
+            )
+            state.final_verdict = sightengine_verdict
+            state.converged = True
+            state.rounds_completed = 0
+            print(f"\n>>> ANALYSIS PATH: Sightengine fast path (conf={se_confidence:.2f} >= 0.8)")
+            print(f">>> Returning verdict={sightengine_verdict.get('verdict')} conf={se_confidence:.2f}")
+            return sightengine_verdict, "sightengine", False, {
+                "rounds_completed": 0,
+                "providers_tried": [],
+                "evidence_table": [{
+                    "round": 0, "capability": "sightengine",
+                    "verdict": sightengine_verdict.get("verdict"),
+                    "confidence": se_confidence,
+                    "analysis_summary": sightengine_verdict.get("evidence", "Sightengine direct verdict"),
+                }],
+                "reasoning_log": state.reasoning_log,
+                "converged": True,
+            }
+
+        # Sightengine < 0.8 — add to evidence for supervisor
+        state.reasoning_log.append(
+            f"Sightengine returned verdict={sightengine_verdict.get('verdict')} "
+            f"conf={se_confidence:.2f} (<0.8) — will be evaluated by supervisor"
+        )
+
+    # ── Build analysis prompt with Sightengine context if present ──
+    if sightengine_verdict is not None:
+        print(f"\n>>> Sightengine result ({sightengine_verdict.get('verdict')}, conf={sightengine_verdict.get('confidence', 0):.2f}) prepended to analysis prompt")
         se_block = (
             "=== SIGHTENGINE DEEPFAKE API RESULT ===\n"
             f"{json.dumps(sightengine_verdict, indent=2)}\n\n"
@@ -900,96 +1309,345 @@ async def _run_analysis_with_fallback(
             "ranges should carry the most weight.\n"
         )
         analysis_prompt = se_block + analysis_prompt
+        state.providers_tried.append("sightengine")
+        state.evidence_table.append({
+            "round": 0,
+            "capability": "sightengine",
+            "verdict": sightengine_verdict.get("verdict"),
+            "confidence": sightengine_verdict.get("confidence", 0),
+            "analysis_summary": sightengine_verdict.get("evidence", "Sightengine analysis"),
+            "conflicting_evidence": sightengine_verdict.get("conflicting_evidence", []),
+        })
 
-    # ── Fallback 1: NVIDIA Nemotron Omni ──────────────────────────
-    if model_used == "none" and settings.primary_api_key:
-        logger.info("Trying Analysis Fallback 1: NVIDIA Nemotron Omni (%s)", settings.primary_model)
-        try:
-            analysis_text, ok = await _run_agent_safe(
-                analysis_agent,
-                analysis_prompt, image_for_analysis, analysis_mime,
-                timeout=settings.request_timeout_seconds,
-                max_retries_on_rate_limit=settings.max_retries_primary,
+    # ── Evidence sufficiency gate before supervisor loop ────────────
+    # Case B: Sightengine 0.55–0.79 with forensic corroboration
+    fcx = forensic_context or {}
+    ppx = preprocessing_result or {}
+    if sightengine_verdict is not None:
+        se_conf = sightengine_verdict.get("confidence", 0.0)
+        if 0.55 <= se_conf < 0.8 and _forensics_corroborate(sightengine_verdict, fcx, ppx):
+            logger.info("Evidence gate: Sightengine conf=%.2f corroborated by forensics — returning directly",
+                        se_conf)
+            state.reasoning_log.append(
+                f"Sightengine returned verdict={sightengine_verdict.get('verdict')} "
+                f"conf={se_conf:.2f} corroborated by forensics — returned directly"
             )
-            if ok and analysis_text.strip():
-                parsed = _extract_json(analysis_text)
-                if parsed is not None:
-                    verdict = parsed
-                    model_used = settings.primary_model
-                    fallback_used = True
-                    logger.info("Analysis Fallback 1 (NVIDIA Omni) succeeded: verdict=%s confidence=%.2f",
-                                verdict.get("verdict", "?"), verdict.get("confidence", 0))
-                    return verdict, model_used, fallback_used
-                logger.warning("Analysis Fallback 1 (NVIDIA Omni) returned no JSON")
-            logger.warning("Analysis Fallback 1 (NVIDIA Omni) FAILED")
-        except Exception as exc:
-            logger.warning("Analysis Fallback 1 (NVIDIA Omni) FAILED: %s", str(exc).split('\n')[0][:200])
-    else:
-        logger.info("Analysis Fallback 1 (NVIDIA Omni) skipped — no API key")
+            state.final_verdict = sightengine_verdict
+            state.converged = True
+            state.rounds_completed = 0
+            print(f">>> ANALYSIS PATH: Evidence gate — Sightengine+forensics corroborated (conf={se_conf:.2f})")
+            return sightengine_verdict, "sightengine", False, _build_investigation_trace(state)
 
-    # ── Fallback 2: NVIDIA Nemotron Nano VL ────────────────────────
-    if model_used == "none" and settings.fallback1_api_key:
-        logger.info("Trying Analysis Fallback 2: NVIDIA Nemotron Nano VL (%s)", settings.fallback1_model)
+    # ── Supervisor loop ───────────────────────────────────────────
+    max_rounds = 2
+    convergence_status: str | None = None
+
+    for rounds_completed in range(1, max_rounds + 1):
+        state.rounds_completed = rounds_completed
+
+        # Build supervisor context (convergence_status fed as context, not override)
+        supervisor_context = build_supervisor_context(
+            investigation_state=state,
+            sightengine_verdict=sightengine_verdict,
+            forensic_context=fcx,
+            preprocessing_result=ppx,
+            convergence_status=convergence_status,
+        )
+
+        # === STAGE 6: SUPERVISOR INPUT ===
+        print(f"\n{'='*60}")
+        print(f"STAGE 6 — SUPERVISOR INPUT (round {rounds_completed})")
+        print(f"{'='*60}")
+        print(supervisor_context)
+        print(f"{'='*60}\n")
+
+        # ── Run supervisor with Cerebras → Gemini fallback ────
+        logger.info("Running supervisor (round %d)...", rounds_completed)
+        model_name = supervisor_agent.model.model if hasattr(supervisor_agent.model, 'model') else 'unknown'
+        print(f"\n=== SUPERVISOR: calling model (round {rounds_completed}) ===")
+        print(f"  Model: {model_name}")
+        import time as _time
+        _t0 = _time.time()
+        supervisor_decision: dict[str, Any] | None = None
         try:
-            analysis_text, ok = await _run_agent_safe(
-                analysis_fb1,
-                analysis_prompt, image_for_analysis, analysis_mime,
+            supervisor_text, ok, supervisor_model_used = await _run_supervisor_with_fallback(
+                supervisor_context,
+                cerebras_supervisor,
+                gemini_supervisor,
                 timeout=settings.request_timeout_seconds,
-                max_retries_on_rate_limit=settings.max_retries_primary,
+                max_retries=settings.max_retries_primary,
             )
-            if ok and analysis_text.strip():
-                parsed = _extract_json(analysis_text)
-                if parsed is not None:
-                    verdict = parsed
-                    model_used = settings.fallback1_model
-                    fallback_used = True
-                    logger.info("Analysis Fallback 2 (NVIDIA Nano) succeeded")
-                    return verdict, model_used, fallback_used
-                logger.warning("Analysis Fallback 2 (NVIDIA Nano) returned no JSON")
-            logger.warning("Analysis Fallback 2 (NVIDIA Nano) FAILED")
-        except Exception as exc:
-            logger.warning("Analysis Fallback 2 (NVIDIA Nano) FAILED: %s", str(exc).split('\n')[0][:200])
-    else:
-        logger.info("Analysis Fallback 2 (NVIDIA Nano) skipped — no API key")
+            _elapsed = _time.time() - _t0
 
-    # ── Fallback 3: Gemini ──────────────────────────────────────────
-    if model_used == "none" and settings.enable_gemini_fallback and settings.google_api_key:
-        logger.info("Trying Analysis Fallback 3: Gemini (%s)", settings.fallback2_model)
-        try:
-            analysis_text, ok = await _run_agent_safe(
-                analysis_fb2,
-                analysis_prompt, image_for_analysis, analysis_mime,
-                timeout=settings.request_timeout_seconds,
+            if supervisor_text and supervisor_text.strip():
+                print(f"=== SUPERVISOR RAW OUTPUT (round {rounds_completed}, {_elapsed:.1f}s, ok={ok}, model={supervisor_model_used}) ===")
+                print(supervisor_text)
+                print("=== END SUPERVISOR RAW OUTPUT ===")
+                logger.info("========== SUPERVISOR RAW OUTPUT (round %d) ==========", rounds_completed)
+                logger.info(supervisor_text)
+                logger.info("======================================================")
+            else:
+                print(f"=== SUPERVISOR EMPTY/FAILED (round {rounds_completed}, {_elapsed:.1f}s, ok={ok}) ===")
+
+            if ok and supervisor_text and supervisor_text.strip():
+                supervisor_decision = _extract_supervisor_json(supervisor_text)
+            else:
+                logger.warning("Supervisor round %d returned empty or failed (ok=%s)",
+                               rounds_completed, ok)
+        except Exception:
+            logger.exception("Supervisor execution failed (round %d)", rounds_completed)
+
+        # ── Infra-failure fallback: best evidence instead of INCONCLUSIVE_STOP ──
+        if supervisor_decision is None:
+            best_entry, best_cap = _best_evidence_entry(state)
+            if best_entry:
+                logger.info("Supervisor failed round %d — falling back to best evidence (cap=%s conf=%.2f)",
+                            rounds_completed, best_cap, best_entry.get("confidence", 0))
+                verdict = _build_verdict_from_entry(best_entry)
+                model_used = _capability_to_model_name(best_cap)
+                fallback_used = True
+                state.final_verdict = verdict
+                state.converged = True
+                state.reasoning_log.append(
+                    f"Round {rounds_completed}: Supervisor infra-failure — "
+                    f"falling back to best evidence ({best_cap}, conf={best_entry.get('confidence', 0):.2f})"
+                )
+                print(f"\n>>> ANALYSIS PATH: Supervisor infra-failure — best-evidence fallback ({best_cap})")
+                trace = _build_investigation_trace(state)
+                return verdict, model_used, fallback_used, trace
+            else:
+                print(f"\n*** SUPERVISOR FAILED (round {rounds_completed}) — no fallback evidence, INCONCLUSIVE_STOP ***")
+                logger.warning(
+                    "Supervisor round %d: invalid output and no fallback evidence. "
+                    "Stopping.", rounds_completed
+                )
+                supervisor_decision = {
+                    "action": "INCONCLUSIVE_STOP",
+                    "reasoning": "Supervisor failed or returned invalid JSON. No fallback evidence available.",
+                    "capability": None,
+                }
+                state.reasoning_log.append(
+                    f"Round {rounds_completed}: Supervisor returned invalid output. "
+                    f"Pipeline safely stopped."
+                )
+        else:
+            state.reasoning_log.append(
+                f"Round {rounds_completed}: Supervisor decision: "
+                f"{supervisor_decision.get('action')} "
+                f"— {supervisor_decision.get('reasoning', '')[:200]}"
             )
-            if ok and analysis_text.strip():
-                parsed = _extract_json(analysis_text)
-                if parsed is not None:
-                    verdict = parsed
-                    model_used = settings.fallback2_model
-                    fallback_used = True
-                    logger.info("Analysis Fallback 3 (Gemini) succeeded — verdict=%s", verdict.get("verdict", "?"))
-                    return verdict, model_used, fallback_used
-                logger.warning("Analysis Fallback 3 (Gemini) returned no JSON")
-            logger.warning("Analysis Fallback 3 (Gemini) FAILED")
-        except Exception as exc:
-            logger.warning("Analysis Fallback 3 (Gemini) FAILED: %s", str(exc).split('\n')[0][:200])
-    else:
-        logger.info("Analysis Fallback 3 (Gemini) skipped — not configured")
 
-    # ── Fallback 4: Evidence-based deterministic (last resort) ───
-    logger.info("Trying evidence-based deterministic (last resort)")
+        decision = supervisor_decision.get("action", "INCONCLUSIVE_STOP")
+
+        if decision == "CONCLUDE":
+            trusted_cap = supervisor_decision.get("capability")
+            model_used = _capability_to_model_name(trusted_cap) if trusted_cap else "deterministic"
+            fallback_used = rounds_completed > 1 or bool(sightengine_verdict)
+
+            provider_entry = None
+            if trusted_cap:
+                for entry in reversed(state.evidence_table):
+                    if entry.get("capability") == trusted_cap:
+                        provider_entry = entry
+                        break
+            if not provider_entry and state.evidence_table:
+                provider_entry = state.evidence_table[-1]
+            if provider_entry:
+                verdict = {
+                    "verdict": provider_entry.get("verdict", "inconclusive"),
+                    "confidence": provider_entry.get("confidence", 0.5),
+                    "analysis_summary": provider_entry.get("analysis_summary", ""),
+                    "evidence": supervisor_decision.get("reasoning", ""),
+                    "key_indicators": provider_entry.get("conflicting_evidence", []),
+                }
+            else:
+                verdict = {
+                    "verdict": "inconclusive",
+                    "confidence": 0.5,
+                    "evidence": supervisor_decision.get("reasoning", ""),
+                    "analysis_summary": "Investigation concluded without provider evidence.",
+                    "key_indicators": [],
+                }
+            state.final_verdict = verdict
+            state.converged = True
+            _log_reasoning(state, rounds_completed, "CONCLUDE", (
+                f"Trusted: {trusted_cap or 'none'}. "
+                f"{supervisor_decision.get('reasoning', '')[:200]}"
+            ))
+            logger.info("Supervisor CONCLUDE: verdict=%s conf=%.2f trusted=%s",
+                        verdict["verdict"], verdict["confidence"], trusted_cap)
+            print(f"\n>>> ANALYSIS PATH: Supervisor CONCLUDE")
+            print(f">>> trusted={trusted_cap} verdict={verdict['verdict']} conf={verdict['confidence']:.2f}")
+            print(f">>> evidence_table: {[(e.get('capability'), e.get('verdict')) for e in state.evidence_table]}")
+            trace = _build_investigation_trace(state)
+            return verdict, model_used, fallback_used, trace
+
+        elif decision == "GET_SECOND_OPINION":
+            capability_id = supervisor_decision.get("capability", "")
+            if not capability_id:
+                state.reasoning_log.append(
+                    f"Round {rounds_completed}: GET_SECOND_OPINION "
+                    f"with no capability specified — treating as INCONCLUSIVE_STOP"
+                )
+                decision = "INCONCLUSIVE_STOP"
+            else:
+                agent_key = CAPABILITY_TO_AGENT_KEY.get(capability_id)
+                if not agent_key or agent_key not in agent_map:
+                    state.reasoning_log.append(
+                        f"Round {rounds_completed}: GET_SECOND_OPINION "
+                        f"recommended unknown capability "
+                        f"'{capability_id}' — treating as INCONCLUSIVE_STOP"
+                    )
+                    decision = "INCONCLUSIVE_STOP"
+
+            if decision == "GET_SECOND_OPINION":
+                agent_key = CAPABILITY_TO_AGENT_KEY[capability_id]
+                provider_agent = agent_map[agent_key]
+                provider_model_name = model_name_map[agent_key]
+                logger.info("Supervisor round %d: GET_SECOND_OPINION — running %s",
+                            rounds_completed, capability_id)
+                _log_reasoning(state, rounds_completed, "GET_SECOND_OPINION", (
+                    f"Selected: {capability_id}. "
+                    f"{supervisor_decision.get('reasoning', '')[:200]}"
+                ))
+
+                try:
+                    analysis_text, ok = await _run_agent_safe(
+                        provider_agent,
+                        analysis_prompt, image_for_analysis, analysis_mime,
+                        timeout=settings.request_timeout_seconds,
+                        max_retries_on_rate_limit=settings.max_retries_primary,
+                    )
+
+                    # === STAGE 4: ANALYSIS RAW RESPONSE ===
+                    print(f"\n{'='*60}")
+                    print(f"STAGE 4 — ANALYSIS RAW RESPONSE ({capability_id})")
+                    print(f"{'='*60}")
+                    print(f"ok={ok}, text_length={len(analysis_text)}")
+                    if analysis_text and analysis_text.strip():
+                        print(analysis_text)
+                    else:
+                        print("(empty response)")
+                    print(f"{'='*60}\n")
+
+                    if ok and analysis_text.strip():
+                        parsed = _extract_json(analysis_text)
+
+                        # === STAGE 5: PARSED ANALYSIS JSON ===
+                        print(f"\n{'='*60}")
+                        print(f"STAGE 5 — PARSED ANALYSIS JSON ({capability_id})")
+                        print(f"{'='*60}")
+                        if parsed is not None:
+                            print(json.dumps(parsed, indent=2))
+                        else:
+                            print("_extract_json returned None (invalid JSON)")
+                        print(f"{'='*60}\n")
+
+                        if _analysis_json_valid(parsed):
+                            state.providers_tried.append(capability_id)
+                            state.evidence_table.append({
+                                "round": rounds_completed,
+                                "capability": capability_id,
+                                "verdict": parsed.get("verdict", "inconclusive"),
+                                "confidence": parsed.get("confidence", 0),
+                                "analysis_summary": parsed.get("analysis_summary", ""),
+                                "conflicting_evidence": parsed.get("conflicting_evidence", []),
+                            })
+                            logger.info("  %s succeeded: verdict=%s conf=%.2f",
+                                        capability_id,
+                                        parsed.get("verdict", "?"),
+                                        parsed.get("confidence", 0))
+                            model_used = provider_model_name
+                            fallback_used = True
+
+                            # ── Convergence check (context only, NOT decision) ──
+                            convergence_status = _check_convergence(state)
+                            if convergence_status:
+                                logger.info("Convergence status for round %d: %s",
+                                            rounds_completed, convergence_status)
+                            continue
+
+                        logger.warning("%s returned no JSON", capability_id)
+                    logger.warning("%s FAILED", capability_id)
+                    state.reasoning_log.append(
+                        f"Round {rounds_completed}: {capability_id} failed or returned no valid JSON"
+                    )
+                except Exception as exc:
+                    logger.warning("%s FAILED: %s", capability_id, str(exc).split('\n')[0][:200])
+                    state.reasoning_log.append(
+                        f"Round {rounds_completed}: {capability_id} error: {str(exc).split(chr(10))[0][:120]}"
+                    )
+
+                if rounds_completed >= max_rounds:
+                    state.reasoning_log.append(
+                        f"Max rounds ({max_rounds}) reached — stopping"
+                    )
+                    decision = "INCONCLUSIVE_STOP"
+
+        if decision == "INCONCLUSIVE_STOP":
+            _log_reasoning(state, rounds_completed, "INCONCLUSIVE_STOP", (
+                supervisor_decision.get('reasoning', 'Supervisor decided to stop')[:200]
+            ))
+            verdict = {
+                "verdict": "inconclusive",
+                "confidence": 0.5,
+                "evidence": "Investigation completed: supervisor determined evidence was "
+                           "insufficient or contradictory.",
+                "analysis_summary": supervisor_decision.get("reasoning",
+                                    "Investigation inconclusive after supervisor review."),
+                "key_indicators": ["Disagreement between analysis sources"],
+            }
+            model_used = _capability_to_model_name(
+                state.evidence_table[-1].get("capability") if state.evidence_table else None
+            ) or "deterministic"
+            fallback_used = True
+            state.final_verdict = verdict
+            state.converged = False
+            logger.info("Supervisor INCONCLUSIVE_STOP after round %d", rounds_completed)
+            print(f"\n>>> ANALYSIS PATH: Supervisor INCONCLUSIVE_STOP (round {rounds_completed})")
+            print(f">>> evidence_table: {[(e.get('capability'), e.get('verdict')) for e in state.evidence_table]}")
+            trace = _build_investigation_trace(state)
+            return verdict, model_used, fallback_used, trace
+
+    # ── Final: max rounds reached without conclusive decision ──────
     verdict = {
         "verdict": "inconclusive",
         "confidence": 0.5,
-        "evidence": "All primary and fallback analysis providers unavailable. "
-                    "Verdict is inconclusive by default.",
-        "key_indicators": ["Analysis pipeline degraded — no provider succeeded"],
+        "evidence": "All investigation rounds completed without a conclusive verdict. "
+                    "Evidence was insufficient or contradictory across providers.",
+        "analysis_summary": "Investigation inconclusive — exhausted all rounds.",
+        "key_indicators": ["Analysis pipeline degraded — no conclusive verdict"],
     }
-    model_used = "deterministic"
+    model_used = _capability_to_model_name(
+        state.evidence_table[-1].get("capability") if state.evidence_table else None
+    ) or "deterministic"
     fallback_used = True
-    logger.info("Deterministic analysis fallback: inconclusive (conf=0.5)")
+    state.final_verdict = verdict
+    state.converged = False
+    logger.info("Analysis final: inconclusive after %d rounds", state.rounds_completed)
+    print(f"\n>>> ANALYSIS PATH: Max rounds reached ({state.rounds_completed}) — fallthrough")
+    print(f">>> evidence_table: {[(e.get('capability'), e.get('verdict')) for e in state.evidence_table]}")
+    trace = _build_investigation_trace(state)
+    return verdict, model_used, fallback_used, trace
 
-    return verdict, model_used, fallback_used
+
+def _log_reasoning(state: InvestigationState, round_num: int, decision: str, detail: str) -> None:
+    """Append a structured reasoning entry to the investigation log."""
+    evidence_summary = ""
+    if state.evidence_table:
+        lines = []
+        for e in state.evidence_table:
+            cap = e.get("capability", "?")
+            ver = e.get("verdict", "?")
+            conf = e.get("confidence", 0)
+            lines.append(f"  - {cap}: {ver} (conf={conf:.2f})")
+        evidence_summary = "\n".join(lines)
+
+    state.reasoning_log.append(
+        f"Round {round_num}: {decision}\n"
+        f"Evidence:\n{evidence_summary}\n"
+        f"Reasoning: {detail}"
+    )
 
 
 # ── Run the report with fallback ───────────────────────────────────────
@@ -1135,6 +1793,40 @@ async def run_pipeline(
     # Log forensic summary
     _log_forensic_summary(secured_context, preprocessing_result)
 
+    # === STAGE 2: FORENSIC FEATURES ===
+    print(f"\n{'='*60}")
+    print("STAGE 2 — FORENSIC FEATURES (raw values)")
+    print(f"{'='*60}")
+    _fc = secured_context
+    print(f"ELA mean_difference: {_fc.get('ela', {}).get('mean_difference', 'N/A')}")
+    print(f"ELA summary: {_fc.get('ela', {}).get('summary', 'N/A')}")
+    print(f"FFT high_freq_ratio: {_fc.get('fft', {}).get('high_freq_ratio', 'N/A')}")
+    print(f"FFT evidence: {_fc.get('fft', {}).get('evidence', 'N/A')}")
+    print(f"Noise variance (Laplacian): {_fc.get('noise', {}).get('noise_variance', 'N/A')}")
+    print(f"Noise evidence: {_fc.get('noise', {}).get('evidence', 'N/A')}")
+    print(f"JPEG block_boundary_ratio: {_fc.get('jpeg_artifacts', {}).get('block_boundary_ratio', 'N/A')}")
+    print(f"JPEG summary: {_fc.get('jpeg_artifacts', {}).get('summary', 'N/A')}")
+    print(f"Compression estimated_quality: {_fc.get('compression', {}).get('estimated_quality', 'N/A')}%")
+    print(f"Compression evidence: {_fc.get('compression', {}).get('evidence', 'N/A')}")
+    print(f"DCT coefficient mean: {preprocessing_result.get('dct_mean', 'N/A')}")
+    _wv = preprocessing_result.get('wavelet', {})
+    print(f"Wavelet LL={_wv.get('LL', 'N/A')} LH={_wv.get('LH', 'N/A')} HL={_wv.get('HL', 'N/A')} HH={_wv.get('HH', 'N/A')}")
+    _ed = preprocessing_result.get('edge_intensity', {})
+    print(f"Edge intensity canny={_ed.get('canny', 'N/A')} sobel={_ed.get('sobel', 'N/A')} laplacian={_ed.get('laplacian', 'N/A')}")
+    print(f"Clone detection: {_fc.get('clones', {}).get('summary', _fc.get('clones', {}).get('evidence', 'N/A'))}")
+    print(f"Face count: {_fc.get('faces', {}).get('face_count', 'N/A')}")
+    print(f"Face evidence: {_fc.get('faces', {}).get('evidence', 'N/A')}")
+    print(f"EXIF tag_count: {_fc.get('exif', {}).get('tag_count', 'N/A')}")
+    print(f"EXIF editing_software: {_fc.get('exif', {}).get('editing_software', [])}")
+    print(f"EXIF ai_tools: {_fc.get('exif', {}).get('ai_generation_tools', [])}")
+    print(f"EXIF summary: {_fc.get('exif', {}).get('summary', 'N/A')}")
+    _pp = preprocessing_result
+    print(f"Pipeline ELA_score: {_pp.get('ela_score', 'N/A')}")
+    print(f"Pipeline FFT_mean: {_pp.get('fft_mean', 'N/A')}")
+    print(f"SHA-256: {_fc.get('hash', {}).get('sha256', 'N/A')}")
+    print(f"pHash: {_fc.get('hash', {}).get('phash', 'N/A')}")
+    print(f"{'='*60}\n")
+
     # Diagnostic images and anomaly regions from preprocessing
     diagnostic_images = preprocessing_result.get("diagnostic_images", {})
     anomaly_regions = preprocessing_result.get("anomaly_regions", [])
@@ -1172,6 +1864,15 @@ async def run_pipeline(
         router_prompt, router_agent, router_fb1, router_fb2, router_fb3,
         mime_type, pipeline_type,
     )
+
+    # === STAGE 1: ROUTER RESULT ===
+    print(f"\n{'='*60}")
+    print("STAGE 1 — ROUTER RESULT")
+    print(f"{'='*60}")
+    print(f"Model used: {router_model_used}")
+    print(f"Fallback: {router_fb}")
+    print(f"Router JSON:\n{json.dumps(routing, indent=2)}")
+    print(f"{'='*60}\n")
 
     router_latency = time.perf_counter() - stage_start
     router_degraded = router_fb or (router_model_used == "deterministic")
@@ -1231,10 +1932,19 @@ async def run_pipeline(
         f"even if the image looks realistic.\n"
         f"7. Output your verdict as JSON using the required schema."
     )
-    verdict, model_used, fallback_used = await _run_analysis_with_fallback(
+    # === STAGE 3: ANALYSIS PROMPT (fully rendered) ===
+    print(f"\n{'='*60}")
+    print("STAGE 3 — ANALYSIS PROMPT (fully rendered)")
+    print(f"{'='*60}")
+    print(analysis_prompt)
+    print(f"{'='*60}\n")
+
+    verdict, model_used, fallback_used, investigation_trace = await _run_analysis_with_fallback(
         analysis_prompt, image_for_analysis, analysis_mime,
         analysis_agent, analysis_fb1, analysis_fb2,
         analysis_frames=analysis_frames,
+        forensic_context=secured_context,
+        preprocessing_result=preprocessing_result,
     )
 
     analysis_latency = time.perf_counter() - stage_start
@@ -1304,6 +2014,7 @@ async def run_pipeline(
         diagnostic_images=diagnostic_images,
         anomaly_regions=anomaly_regions,
         preprocessing_result=preprocessing_result,
+        investigation_trace=investigation_trace,
     )
 
 
@@ -1337,6 +2048,7 @@ def _build_final_result(
     diagnostic_images: dict | None = None,
     anomaly_regions: list | None = None,
     preprocessing_result: dict | None = None,
+    investigation_trace: dict | None = None,
 ) -> dict[str, Any]:
     pipeline_latency = time.perf_counter() - pipeline_start
 
@@ -1349,6 +2061,41 @@ def _build_final_result(
     logger.info("=== VERDICT CHAIN ===")
     logger.info("  Provider confidence: %.4f", provider_conf)
     logger.info("  Final verdict: %s (conf=%.4f)", verdict.get("verdict", "?"), provider_conf)
+
+    # === STAGE 7: FINAL VERDICT LOGIC ===
+    _investigation_trace = investigation_trace or {}
+    _evidence_table = _investigation_trace.get("evidence_table", [])
+    _reasoning_log = _investigation_trace.get("reasoning_log", [])
+    _converged = _investigation_trace.get("converged", False)
+    print(f"\n{'='*60}")
+    print("STAGE 7 — FINAL VERDICT LOGIC")
+    print(f"{'='*60}")
+    print(f"Verdict from analysis: {json.dumps(verdict, indent=2)}")
+    print(f"\nEvidence table ({len(_evidence_table)} entries):")
+    for _e in _evidence_table:
+        print(f"  round={_e.get('round')} cap={_e.get('capability')} verdict={_e.get('verdict')} conf={_e.get('confidence')}")
+    print(f"\nReasoning log ({len(_reasoning_log)} entries):")
+    for _r in _reasoning_log:
+        print(f"  {_r[:200]}")
+    print(f"\nConverged: {_converged}")
+    print(f"Model used: {model_used}")
+    print(f"Fallback used: {fallback_used}")
+    # Determine which rule selected the verdict
+    if _converged:
+        _last_reasoning = _reasoning_log[-1] if _reasoning_log else ""
+        if "Sightengine" in _last_reasoning and "returned directly" in _last_reasoning:
+            print(f"Rule: Sightengine fast path (confidence >= 0.8)")
+        elif "CONCLUDE" in _last_reasoning:
+            print(f"Rule: Supervisor CONCLUDE — trusted provider verdict")
+        else:
+            print(f"Rule: Converged via supervisor investigation")
+    elif _reasoning_log and any("Supervisor returned invalid" in r for r in _reasoning_log):
+        print(f"Rule: Supervisor failed — safe default to INCONCLUSIVE_STOP")
+    elif _reasoning_log and any("INCONCLUSIVE_STOP" in r for r in _reasoning_log):
+        print(f"Rule: Supervisor INCONCLUSIVE_STOP")
+    else:
+        print(f"Rule: Max rounds reached or fallthrough — inconclusive")
+    print(f"{'='*60}\n")
 
     # ── Create immutable final verdict (Req 8) ────────────────────
     # Copy the verdict so no later code can mutate the original
@@ -1363,6 +2110,7 @@ def _build_final_result(
         pipeline_latency=pipeline_latency,
         model_used=model_used,
         fallback_used=fallback_used,
+        investigation_trace=investigation_trace,
     )
     logger.info("Report verdict: %s (conf=%.4f)", report_json.get("verdict", "?"), report_json.get("confidence", 0))
     report_markdown = format_report_markdown(report_json, report_text)
@@ -1407,4 +2155,5 @@ def _build_final_result(
         "degraded": router_degraded or report_degraded,
         "diagnostic_images": diagnostic_images or {},
         "anomaly_regions": anomaly_regions or [],
+        "investigation_trace": investigation_trace or {},
     }

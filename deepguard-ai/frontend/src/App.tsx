@@ -535,6 +535,7 @@ export default function App() {
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-8" id="certified-samples-grid">
                     {STATIC_SAMPLES.map((sample) => {
                       const isFake = sample.class === 'Fake';
+                      const isInconc = sample.class === 'Inconclusive';
                       return (
                         <div
                           key={sample.id}
@@ -550,9 +551,11 @@ export default function App() {
                             />
                             <span className={`absolute top-4 right-4 text-[9px] font-mono font-extrabold px-3 py-1 bg-black/80 rounded-full uppercase border ${isFake
                               ? 'text-rose-400 border-rose-900/50'
+                              : isInconc
+                              ? 'text-amber-400 border-amber-900/50'
                               : 'text-emerald-400 border-emerald-900/50'
                               }`}>
-                              {sample.class === 'Fake' ? 'DEEPFAKE ANOMALIES' : 'VERIFIED GENUINE'}
+                              {sample.class === 'Fake' ? 'DEEPFAKE ANOMALIES' : sample.class === 'Inconclusive' ? 'INCONCLUSIVE — REVIEW' : 'VERIFIED GENUINE'}
                             </span>
 
                             <div className="absolute bottom-4 left-4 right-4 z-10">
@@ -648,8 +651,8 @@ export default function App() {
                           <div className="grid grid-cols-2 gap-4">
                             <div className="p-4 bg-gray-900/50 rounded-xl border border-gray-900">
                               <span className="text-[9px] font-mono text-gray-500 uppercase block tracking-wider">Class Validation</span>
-                              <div className={`text-sm font-black mt-1 uppercase ${selectedReportSample.class === 'Fake' ? 'text-rose-400' : 'text-emerald-400'}`}>
-                                {selectedReportSample.class === 'Fake' ? '🔴 DEEPFAKE' : '🟢 GENUINE'}
+                              <div className={`text-sm font-black mt-1 uppercase ${selectedReportSample.class === 'Fake' ? 'text-rose-400' : selectedReportSample.class === 'Inconclusive' ? 'text-amber-400' : 'text-emerald-400'}`}>
+                                {selectedReportSample.class === 'Fake' ? '🔴 DEEPFAKE' : selectedReportSample.class === 'Inconclusive' ? '🟡 INCONCLUSIVE' : '🟢 GENUINE'}
                               </div>
                             </div>
                             <div className="p-4 bg-gray-900/50 rounded-xl border border-gray-900">
@@ -665,7 +668,7 @@ export default function App() {
                             <ul className="space-y-2.5 text-xs text-gray-300 leading-relaxed">
                               {selectedReportSample.findings.map((f, i) => (
                                 <li key={i} className="flex items-start gap-2.5">
-                                  <span className={`w-1.5 h-1.5 rounded-full mt-1.5 ${selectedReportSample.class === 'Fake' ? 'bg-rose-500' : 'bg-emerald-500'}`} />
+                                  <span className={`w-1.5 h-1.5 rounded-full mt-1.5 ${selectedReportSample.class === 'Fake' ? 'bg-rose-500' : selectedReportSample.class === 'Inconclusive' ? 'bg-amber-500' : 'bg-emerald-500'}`} />
                                   <span>{f}</span>
                                 </li>
                               ))}
@@ -793,8 +796,8 @@ export default function App() {
                             <div className="p-5 bg-gray-950 rounded-2xl border border-gray-900 flex items-center justify-between shadow-sm">
                               <div>
                                 <span className="text-[9px] text-gray-500 font-mono block uppercase tracking-wider">INTEGRITY CLASSIFICATION</span>
-                                <div className={`text-lg font-black mt-1 uppercase tracking-tight ${activeReport.class === 'Fake' ? 'text-rose-455' : 'text-emerald-455'}`}>
-                                  {activeReport.class === 'Fake' ? '🔴 DEEPFAKE DETECTED' : '🟢 VERIFIED GENUINE'}
+                                <div className={`text-lg font-black mt-1 uppercase tracking-tight ${activeReport.class === 'Fake' ? 'text-rose-455' : activeReport.class === 'Inconclusive' ? 'text-amber-455' : 'text-emerald-455'}`}>
+                                  {activeReport.class === 'Fake' ? '🔴 DEEPFAKE DETECTED' : activeReport.class === 'Inconclusive' ? '🟡 INCONCLUSIVE — MANUAL REVIEW' : '🟢 VERIFIED GENUINE'}
                                 </div>
                               </div>
                               <div className={`px-3 py-1.5 text-[10px] font-bold rounded uppercase border font-mono tracking-wider ${activeReport.risk === 'High'
@@ -813,7 +816,7 @@ export default function App() {
                               </div>
                               <div className="w-full bg-gray-900 h-2 rounded-full overflow-hidden">
                                 <div
-                                  className={`h-full rounded-full ${activeReport.class === 'Fake' ? 'bg-rose-500' : 'bg-emerald-500'}`}
+                                  className={`h-full rounded-full ${activeReport.class === 'Fake' ? 'bg-rose-500' : activeReport.class === 'Inconclusive' ? 'bg-amber-500' : 'bg-emerald-500'}`}
                                   style={{ width: `${Math.round(activeReport.confidence * 100)}%` }}
                                 />
                               </div>
@@ -834,7 +837,7 @@ export default function App() {
                             <ul className="space-y-3.5">
                               {activeReport.findings.map((f, i) => (
                                 <li key={i} className="flex items-start gap-3 text-xs text-gray-300 leading-relaxed">
-                                  <span className={`w-1.5 h-1.5 rounded-full mt-1.5 ${activeReport.class === 'Fake' ? 'bg-rose-500' : 'bg-emerald-500'}`} />
+                                  <span className={`w-1.5 h-1.5 rounded-full mt-1.5 ${activeReport.class === 'Fake' ? 'bg-rose-500' : activeReport.class === 'Inconclusive' ? 'bg-amber-500' : 'bg-emerald-500'}`} />
                                   <span>{f}</span>
                                 </li>
                               ))}

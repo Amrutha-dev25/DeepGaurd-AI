@@ -393,6 +393,65 @@ ${media.checkCirculating}`;
           </p>
         </div>
 
+        {/* Investigation trace section */}
+        {media.rawResponse?.investigation_trace && (
+          <div className="bg-gray-50 dark:bg-gray-950/30 p-4 rounded-xl border border-gray-100 dark:border-gray-850">
+            <details>
+              <summary className="text-xs font-semibold text-gray-700 dark:text-gray-350 uppercase tracking-wider mb-2 cursor-pointer select-none">
+                Investigation Trace ({media.rawResponse.investigation_trace.rounds_completed} rounds
+                {media.rawResponse.investigation_trace.converged ? ', converged' : ', not converged'})
+              </summary>
+              <div className="space-y-3 mt-3 text-xs text-gray-600 dark:text-gray-400">
+                {media.rawResponse.investigation_trace.reasoning_log.map((log, idx) => (
+                  <div key={idx} className="flex items-start gap-2">
+                    <span className="text-gray-400 dark:text-gray-500 font-mono text-[10px] mt-0.5">
+                      {'>'}
+                    </span>
+                    <p className="leading-relaxed">{log}</p>
+                  </div>
+                ))}
+                {media.rawResponse.investigation_trace.evidence_table.length > 0 && (
+                  <div className="mt-3 pt-3 border-t border-gray-200 dark:border-gray-800">
+                    <p className="text-[11px] font-semibold text-gray-500 dark:text-gray-500 uppercase tracking-wider mb-2">
+                      Evidence Table
+                    </p>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left text-[11px]">
+                        <thead>
+                          <tr className="text-gray-400 dark:text-gray-500 border-b border-gray-200 dark:border-gray-800">
+                            <th className="pb-1.5 pr-3">Round</th>
+                            <th className="pb-1.5 pr-3">Capability</th>
+                            <th className="pb-1.5 pr-3">Verdict</th>
+                            <th className="pb-1.5">Confidence</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {media.rawResponse.investigation_trace.evidence_table.map((entry, idx) => (
+                            <tr key={idx} className="border-b border-gray-100 dark:border-gray-850">
+                              <td className="py-1.5 pr-3 text-gray-500 dark:text-gray-500">{entry.round}</td>
+                              <td className="py-1.5 pr-3 font-medium">{entry.capability}</td>
+                              <td className="py-1.5 pr-3">
+                                <span className={`font-semibold ${
+                                  entry.verdict === 'fake' ? 'text-rose-600 dark:text-rose-400' :
+                                  entry.verdict === 'real' ? 'text-emerald-600 dark:text-emerald-400' :
+                                  'text-amber-600 dark:text-amber-400'
+                                }`}>
+                                  {entry.verdict.toUpperCase()}
+                                </span>
+                              </td>
+                              <td className="py-1.5">{entry.confidence ? `${Math.round(entry.confidence * 100)}%` : '-'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </details>
+          </div>
+        )}
+
         {/* Online circulation block */}
         <div className="border-t border-gray-100 dark:border-gray-850 pt-4 flex items-start gap-3">
           <div className="p-2 bg-indigo-50 dark:bg-indigo-950/30 text-indigo-600 dark:text-indigo-400 rounded-lg">

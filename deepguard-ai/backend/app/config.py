@@ -106,6 +106,18 @@ class Settings(BaseSettings):
     pii_redaction_enabled: bool = True
     injection_detection_enabled: bool = True
 
+    # ── Supervisor Agent — Cerebras (primary, separate from NVIDIA/Groq) ───
+    # Sign up at cloud.cerebras.ai, no credit card required.
+    cerebras_api_key: str = ""
+    supervisor_primary_model: str = "cerebras/gpt-oss-120b"
+
+    # ── Supervisor Agent — Gemini (fallback, reuse existing Google key) ──
+    supervisor_fallback_model: str = "gemini-2.5-flash"
+
+    # ── Supervisor Agent — legacy model override (deprecated, replaced by
+    # supervisor_primary_model / supervisor_fallback_model) ────────────────
+    supervisor_model: str = ""
+
     # ── Logging ──────────────────────────────────────────────────────────
     log_level: str = "INFO"
 

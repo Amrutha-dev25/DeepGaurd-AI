@@ -37,6 +37,22 @@ export interface FrameAnalysisEntry {
   summary: string;
 }
 
+export interface EvidenceTableEntry {
+  round: number;
+  capability: string;
+  verdict: string;
+  confidence: number;
+  analysis_summary: string;
+}
+
+export interface InvestigationTrace {
+  rounds_completed: number;
+  providers_tried: string[];
+  evidence_table: EvidenceTableEntry[];
+  reasoning_log: string[];
+  converged: boolean;
+}
+
 export interface BackendAnalysisResponse {
   verdict: string;
   confidence: number;
@@ -72,6 +88,7 @@ export interface BackendAnalysisResponse {
   request_id: string;
   report_text?: string;
   report_markdown?: string;
+  investigation_trace?: InvestigationTrace;
 }
 
 export interface SampleMedia {

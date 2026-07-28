@@ -13,6 +13,7 @@ def build_report_json(
     pipeline_latency: float,
     model_used: str,
     fallback_used: bool,
+    investigation_trace: dict | None = None,
 ) -> dict[str, Any]:
     """Build the structured JSON report returned to the frontend."""
     v = verdict.get("verdict", "inconclusive")
@@ -68,6 +69,10 @@ def build_report_json(
         result["analysis_summary"] = verdict.get("evidence", "")
     result["evidence"] = verdict.get("evidence", verdict.get("analysis_summary", ""))
     result["key_indicators"] = verdict.get("key_indicators", verdict.get("supporting_evidence", []))
+
+    # Investigation trace (supervisor decision loop)
+    if investigation_trace:
+        result["investigation_trace"] = investigation_trace
 
     return result
 
