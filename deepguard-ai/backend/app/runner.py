@@ -1168,6 +1168,7 @@ async def _run_analysis_with_fallback(
     analysis_frames: list[bytes] | None = None,
     forensic_context: dict[str, Any] | None = None,
     preprocessing_result: dict[str, Any] | None = None,
+    file_type: str = "image",
 ) -> tuple[dict[str, Any], str, bool, dict[str, Any]]:
     """Run Analysis Agent with Supervisor-driven decision loop.
 
@@ -1212,6 +1213,7 @@ async def _run_analysis_with_fallback(
 
     # ── Investigation state ────────────────────────────────────────
     state = InvestigationState()
+    state.file_type = file_type
     state.reasoning_log = []
 
     # ── Sightengine REST API ──────────────────────────────────────
@@ -1920,6 +1922,17 @@ async def run_pipeline(
         f"  Compression quality:     authentic 75–98%, suspicious <60% or '100%'\n"
         f"  Edge intensity (Canny):  authentic 0.01–0.10, suspicious <0.005 or >0.20\n"
         f"  Real photo anchor: ELA≈0.19, noise_variance≈470\n\n"
+        f"=== VIDEO NOTE ===\n"
+        f"The reference ranges above were empirically calibrated primarily on static\n"
+        f"image data. If ROUTER SUMMARY indicates file_type is \"video\", the source\n"
+        f"frame was extracted and re-encoded from video (via cv2.imwrite), which\n"
+        f"independently introduces noise-reduction and compression artifacts unrelated\n"
+        f"to manipulation. When file_type is video, treat borderline deviations in\n"
+        f"noise variance, FFT high-frequency ratio, and JPEG block-boundary ratio as\n"
+        f"WEAKER evidence than the same deviations on a native image — do not flag\n"
+        f"these alone as strong manipulation evidence for video sources unless the\n"
+        f"deviation is extreme (more than 3× outside the stated range) OR corroborated\n"
+        f"by ELA or DCT anomalies as well.\n\n"
         f"=== INSTRUCTIONS ===\n"
         f"1. Examine the image visually for manipulation artifacts.\n"
         f"2. Review the FORENSIC EVIDENCE above — every value was computed "
@@ -1945,6 +1958,7 @@ async def run_pipeline(
         analysis_frames=analysis_frames,
         forensic_context=secured_context,
         preprocessing_result=preprocessing_result,
+        file_type=routing.get("file_type", "image"),
     )
 
     analysis_latency = time.perf_counter() - stage_start

@@ -293,6 +293,7 @@ def build_supervisor_context(
     GET_SECOND_OPINION / INCONCLUSIVE_STOP.
     """
     parts: list[str] = [
+        f"=== FILE TYPE: {investigation_state.file_type or 'image'} ===\n",
         "=== EVIDENCE TABLE ===",
     ]
     if investigation_state.evidence_table:
