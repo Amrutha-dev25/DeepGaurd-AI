@@ -4,9 +4,9 @@ from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# .env lives at workspace root (docker-compose auto-loads it).
-# Path from this file: backend/app/config.py -> ../../../.env
-_env_file = str(Path(__file__).resolve().parents[3] / ".env")
+# .env lives at project root (docker-compose auto-loads it).
+# Path from this file: backend/app/config.py -> ../../.env
+_env_file = str(Path(__file__).resolve().parents[2] / ".env")
 
 
 class Settings(BaseSettings):

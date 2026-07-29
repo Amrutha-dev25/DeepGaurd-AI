@@ -1,0 +1,32 @@
+version: '3.8'
+
+services:
+  backend:
+    build: 
+      context: ./deepguard-ai
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+      - "8090:8090"
+    environment:
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - SIGHTENGINE_API_USER=${SIGHTENGINE_API_USER}
+      - SIGHTENGINE_API_SECRET=${SIGHTENGINE_API_SECRET}
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - PRIMARY_API_KEY=${PRIMARY_API_KEY}
+    volumes:
+      - ./deepguard-ai/backend/app/uploads:/app/backend/app/uploads
+      - ./deepguard-ai/backend/app/logs:/app/backend/app/logs
+
+  frontend:
+    image: node:20-alpine
+    working_dir: /app
+    volumes:
+      - ./deepguard-ai/frontend:/app
+    ports:
+      - "5173:5173"
+      - "3000:3000"
+    command: >
+      sh -c "npm install && npm run dev -- --host 0.0.0.0"
+    depends_on:
+      - backend

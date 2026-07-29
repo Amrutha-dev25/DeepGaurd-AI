@@ -38,13 +38,13 @@ def _validate_api_keys():
     """Validate required API keys at startup. Prints warning on missing keys without SystemExit."""
     missing: list[str] = []
     if not settings.sightengine_api_user or not settings.sightengine_api_secret:
-        missing.append("SIGHTENGINE_API_USER / SIGHTENGINE_API_SECRET (Analysis Primary — will fall back to NVIDIA)")
+        missing.append("SIGHTENGINE_API_USER / SIGHTENGINE_API_SECRET (Analysis Primary)")
     if not settings.primary_api_key:
-        missing.append("PRIMARY_API_KEY (needed for Analysis Fallback 1 — NVIDIA Nemotron Omni)")
+        missing.append("PRIMARY_API_KEY (needed for Analysis Agent — NVIDIA Nemotron Omni)")
     if not settings.groq_api_key:
         missing.append("GROQ_API_KEY (needed for Router and Report Agent)")
     if not settings.fallback1_api_key:
-        missing.append("FALLBACK1_API_KEY (needed for Analysis Fallback 2 — NVIDIA Nemotron Nano 12B VL)")
+        missing.append("FALLBACK1_API_KEY (needed for Analysis FB1 — NVIDIA Nemotron Nano 12B VL)")
     if settings.enable_gemini_fallback and not settings.google_api_key:
         missing.append("GOOGLE_API_KEY (needed because ENABLE_GEMINI_FALLBACK=true)")
     if missing:
@@ -57,21 +57,23 @@ def _validate_api_keys():
     # Provider configuration logging — shows actual execution order
     logger.info("=== DeepGuard AI Provider Configuration ===")
     logger.info("Router Primary: Groq (%s)", settings.router_model)
-    logger.info("Router Fallback 1: NVIDIA Omni (%s)", settings.router_fallback2_model)
-    logger.info("Router Fallback 2: Gemini (%s) — %s", settings.router_fallback1_model,
+    logger.info("Router FB1: NVIDIA Omni (%s)", settings.router_fallback2_model)
+    logger.info("Router FB2: NVIDIA Nano (%s)", settings.router_fallback3_model)
+    logger.info("Router FB3: Gemini (%s) — %s", settings.router_fallback1_model,
                  "ENABLED" if settings.enable_gemini_fallback else "DISABLED (set ENABLE_GEMINI_FALLBACK=true)")
-    logger.info("Router Fallback 3: Deterministic routing (last resort)")
-    logger.info("Analysis Primary: Sightengine REST API (deepfake detection — used as evidence for LLM reconciliation)")
-    logger.info("Analysis Fallback 1: NVIDIA Nemotron Omni (%s)", settings.primary_model)
-    logger.info("Analysis Fallback 2: NVIDIA Nemotron Nano 12B VL (%s)", settings.fallback1_model)
-    logger.info("Analysis Fallback 3: Gemini (%s) — %s", settings.fallback2_model,
+    logger.info("Router Fallthrough: Deterministic routing (last resort)")
+    logger.info("Analysis Primary: Sightengine REST API (deepfake detection)")
+    logger.info("Analysis Agent (supervisor-dispatched): NVIDIA Omni (%s)", settings.primary_model)
+    logger.info("Analysis FB1 (supervisor-dispatched): NVIDIA Nano (%s)", settings.fallback1_model)
+    logger.info("Analysis FB2 (supervisor-dispatched): Gemini (%s) — %s", settings.fallback2_model,
                  "ENABLED" if settings.enable_gemini_fallback else "DISABLED (set ENABLE_GEMINI_FALLBACK=true)")
-    logger.info("Analysis Fallback 4: Last-resort fallthrough (no LLM available)")
+    logger.info("Analysis Fallthrough: Last-resort fallthrough (no LLM available)")
     logger.info("Report Primary: Groq (%s)", settings.report_model)
-    logger.info("Report Fallback 1: NVIDIA Omni (%s)", settings.report_fallback2_model)
-    logger.info("Report Fallback 2: Gemini (%s) — %s", settings.report_fallback1_model,
+    logger.info("Report FB1: NVIDIA Omni (%s)", settings.report_fallback2_model)
+    logger.info("Report FB2: NVIDIA Nano (%s)", settings.report_fallback3_model)
+    logger.info("Report FB3: Gemini (%s) — %s", settings.report_fallback1_model,
                  "ENABLED" if settings.enable_gemini_fallback else "DISABLED (set ENABLE_GEMINI_FALLBACK=true)")
-    logger.info("Report Fallback 3: Deterministic report generator (last resort)")
+    logger.info("Report Fallthrough: Deterministic report generator (last resort)")
     logger.info("Supervisor: Gemini (%s) — %s", settings.supervisor_model or "gemini-2.5-flash",
                  "ENABLED" if settings.google_api_key else "DISABLED (set GOOGLE_API_KEY)")
     logger.info("Gemini Fallback Toggle: %s", "ENABLED" if settings.enable_gemini_fallback else "DISABLED")

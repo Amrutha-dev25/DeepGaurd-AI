@@ -63,8 +63,8 @@ def _nvidia_key_or_fallback(specific_key: str) -> str:
 
 
 def get_router_fallback1_model() -> LiteLlm:
-    """Router NVIDIA Omni (Fallback 1 in execution order) via LiteLlm."""
-    logger.info("Router NVIDIA Omni (Fallback 2): %s", settings.router_fallback2_model)
+    """Router FB1: NVIDIA Omni via LiteLlm."""
+    logger.info("Router FB1: NVIDIA Omni (%s)", settings.router_fallback2_model)
     return LiteLlm(
         model=settings.router_fallback2_model,
         api_key=_nvidia_key_or_fallback(settings.router_fallback2_api_key),
@@ -75,8 +75,8 @@ def get_router_fallback1_model() -> LiteLlm:
 
 
 def get_router_fallback2_model() -> LiteLlm:
-    """Unused NVIDIA Nano — retained for interface compatibility."""
-    logger.info("Router NVIDIA Nano (unused in Router chain)")
+    """Router FB2: NVIDIA Nano via LiteLlm."""
+    logger.info("Router FB2: NVIDIA Nano (%s)", settings.router_fallback3_model)
     return LiteLlm(
         model=settings.router_fallback3_model,
         api_key=_nvidia_key_or_fallback(settings.router_fallback3_api_key),
@@ -87,8 +87,8 @@ def get_router_fallback2_model() -> LiteLlm:
 
 
 def get_router_fallback3_model() -> str:
-    """Router Gemini (Fallback 2 in execution order) — native ADK string."""
-    logger.info("Router Gemini (Fallback 1): %s", settings.router_fallback1_model)
+    """Router FB3: Gemini (native ADK string)."""
+    logger.info("Router FB3: Gemini (%s)", settings.router_fallback1_model)
     return settings.router_fallback1_model
 
 
@@ -96,8 +96,8 @@ def get_router_fallback3_model() -> str:
 
 
 def get_analysis_primary_model() -> LiteLlm:
-    """Analysis NVIDIA Omni (Fallback 1 in execution order) via LiteLlm with json_object."""
-    logger.info("Analysis NVIDIA Omni (Fallback 2): %s", settings.primary_model)
+    """Analysis Agent: NVIDIA Omni via LiteLlm with json_object."""
+    logger.info("Analysis Agent: NVIDIA Omni (%s)", settings.primary_model)
     return LiteLlm(
         model=settings.primary_model,
         api_key=_nvidia_key_or_fallback(settings.primary_api_key),
@@ -109,8 +109,8 @@ def get_analysis_primary_model() -> LiteLlm:
 
 
 def get_analysis_fallback1_model() -> LiteLlm:
-    """Analysis NVIDIA Nano (Fallback 2 in execution order) via LiteLlm with json_object."""
-    logger.info("Analysis NVIDIA Nano (Fallback 3): %s", settings.fallback1_model)
+    """Analysis FB1: NVIDIA Nano via LiteLlm with json_object."""
+    logger.info("Analysis FB1: NVIDIA Nano (%s)", settings.fallback1_model)
     return LiteLlm(
         model=settings.fallback1_model,
         api_key=_nvidia_key_or_fallback(settings.fallback1_api_key),
@@ -122,8 +122,8 @@ def get_analysis_fallback1_model() -> LiteLlm:
 
 
 def get_analysis_fallback2_model() -> str:
-    """Analysis Gemini (Fallback 3 in execution order) — native ADK string."""
-    logger.info("Analysis Gemini (Fallback 1): %s", settings.fallback2_model)
+    """Analysis FB2: Gemini (native ADK string)."""
+    logger.info("Analysis FB2: Gemini (%s)", settings.fallback2_model)
     return settings.fallback2_model
 
 
@@ -142,8 +142,8 @@ def get_report_model() -> LiteLlm:
 
 
 def get_report_fallback1_model() -> LiteLlm:
-    """Report NVIDIA Omni (Fallback 1 in execution order) via LiteLlm."""
-    logger.info("Report NVIDIA Omni (Fallback 2): %s", settings.report_fallback2_model)
+    """Report FB1: NVIDIA Omni via LiteLlm."""
+    logger.info("Report FB1: NVIDIA Omni (%s)", settings.report_fallback2_model)
     return LiteLlm(
         model=settings.report_fallback2_model,
         api_key=_nvidia_key_or_fallback(settings.report_fallback2_api_key),
@@ -154,8 +154,8 @@ def get_report_fallback1_model() -> LiteLlm:
 
 
 def get_report_fallback2_model() -> LiteLlm:
-    """Unused NVIDIA Nano — retained for interface compatibility."""
-    logger.info("Report NVIDIA Nano (unused in Report chain)")
+    """Report FB2: NVIDIA Nano via LiteLlm."""
+    logger.info("Report FB2: NVIDIA Nano (%s)", settings.report_fallback3_model)
     return LiteLlm(
         model=settings.report_fallback3_model,
         api_key=_nvidia_key_or_fallback(settings.report_fallback3_api_key),
@@ -166,6 +166,6 @@ def get_report_fallback2_model() -> LiteLlm:
 
 
 def get_report_fallback3_model() -> str:
-    """Report Gemini (Fallback 2 in execution order) — native ADK string."""
-    logger.info("Report Gemini (Fallback 1): %s", settings.report_fallback1_model)
+    """Report FB3: Gemini (native ADK string)."""
+    logger.info("Report FB3: Gemini (%s)", settings.report_fallback1_model)
     return settings.report_fallback1_model

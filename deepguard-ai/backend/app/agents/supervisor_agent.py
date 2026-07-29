@@ -206,25 +206,13 @@ Output ONLY valid JSON with these exact fields. No extra text, no markdown.
 
 
 def create_supervisor_agent() -> Agent:
-    """Create a text-only Supervisor Agent.
-
-    Uses SUPERVISOR_MODEL if set (env override for debugging), otherwise
-    falls back to router_model (Groq by default).
-    """
-    supervisor_model = settings.supervisor_model or settings.router_model
-    model_name = supervisor_model
-    api_key = settings.groq_api_key
-    base_url = settings.router_endpoint or "https://api.groq.com/openai/v1"
-
-    if "nvidia" in supervisor_model.lower():
-        api_key = settings.primary_api_key or settings.router_fallback2_api_key or settings.groq_api_key
-        base_url = settings.primary_endpoint or settings.router_fallback2_endpoint or base_url
-
-    logger.info("Creating Supervisor Agent: model=%s base=%s", model_name, base_url)
+    """Create a text-only fallback Supervisor Agent (used when no google_api_key)."""
+    _model = settings.supervisor_model or settings.router_model
+    logger.info("Creating fallback Supervisor Agent: model=%s", _model)
     model = LiteLlm(
-        model=model_name,
-        api_key=api_key,
-        base_url=base_url,
+        model=_model,
+        api_key=settings.groq_api_key,
+        base_url=settings.router_endpoint or "https://api.groq.com/openai/v1",
         temperature=0.1,
         max_tokens=1024,
     )

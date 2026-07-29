@@ -25,14 +25,17 @@ ROUTER_SCHEMA = {
 
 ANALYSIS_SCHEMA = {
     "type": "object",
-    "required": ["verdict", "confidence", "evidence"],
+    "required": ["verdict", "confidence", "analysis_summary"],
     "properties": {
         "verdict": {"type": "string", "enum": ["real", "fake", "inconclusive"]},
         "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
-        "evidence": {"type": "string"},
-        "key_indicators": {"type": "array", "items": {"type": "string"}},
-        "reasoning": {"type": "string"},
+        "analysis_summary": {"type": "string"},
+        "visual_observations": {"type": "array", "items": {"type": "string"}},
+        "forensic_observations": {"type": "array", "items": {"type": "string"}},
+        "supporting_evidence": {"type": "array", "items": {"type": "string"}},
+        "conflicting_evidence": {"type": "array", "items": {"type": "string"}},
         "limitations": {"type": "string"},
+        "recommendation": {"type": "string"},
     },
 }
 
