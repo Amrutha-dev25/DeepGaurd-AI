@@ -236,43 +236,20 @@ def create_supervisor_agent() -> Agent:
     )
 
 
-def create_cerebras_supervisor_agent() -> Agent | None:
-    """Cerebras supervisor agent — primary, separate provider pool from NVIDIA/Groq."""
-    key_present = bool(settings.cerebras_api_key)
-    key_preview = f"{settings.cerebras_api_key[:6]}..." if key_present else "(empty)"
-    logger.info("CEREBRAS_API_KEY present=%s preview=%s model=%s",
-                key_present, key_preview, settings.supervisor_primary_model)
-    if not key_present:
-        logger.warning("CEREBRAS_API_KEY not set — Cerebras supervisor unavailable")
-        return None
-    model = LiteLlm(
-        model=settings.supervisor_primary_model,
-        api_key=settings.cerebras_api_key,
-        temperature=0.1,
-        max_tokens=1024,
-    )
-    return Agent(
-        name="supervisor_agent_cerebras",
-        model=model,
-        instruction=SUPERVISOR_INSTRUCTION,
-        tools=[],
-    )
-
-
 def create_gemini_supervisor_agent() -> Agent | None:
-    """Gemini supervisor agent — fallback (native ADK string, not LiteLlm).
+    """Gemini supervisor agent (native ADK string, not LiteLlm).
 
-    Uses the same construction pattern as create_router_fallback3_agent()
-    and create_gemini_fallback_agent() — returns the model name as a
-    native ADK string so ADK handles the Google client internally.
+    This is the sole supervisor provider — no Cerebras fallback.
+    Falls back to text-only create_supervisor_agent() if no google_api_key.
     """
-    if not settings.enable_gemini_fallback or not settings.google_api_key:
-        logger.warning("Gemini fallback not enabled or no API key — Gemini supervisor unavailable")
+    if not settings.google_api_key:
+        logger.warning("No GOOGLE_API_KEY — Gemini supervisor unavailable, falling back to text-only agent")
         return None
-    logger.info("Creating Gemini Supervisor Agent: model=%s", settings.supervisor_fallback_model)
+    _model = settings.supervisor_model or "gemini-2.5-flash"
+    logger.info("Creating Gemini Supervisor Agent: model=%s", _model)
     return Agent(
         name="supervisor_agent_gemini",
-        model=settings.supervisor_fallback_model,
+        model=_model,
         instruction=SUPERVISOR_INSTRUCTION,
         tools=[],
     )

@@ -40,7 +40,6 @@ from app.agents.supervisor_agent import (
     InvestigationState,
     build_supervisor_context,
     create_supervisor_agent,
-    create_cerebras_supervisor_agent,
     create_gemini_supervisor_agent,
     _extract_supervisor_json,
 )
@@ -235,7 +234,13 @@ async def _run_agent_isolated(
 
     # Debug dump of final result
     import json as _jd
-    _model = str(getattr(getattr(agent, 'model', None), 'model', 'unknown'))
+    _m = getattr(agent, 'model', None)
+    if isinstance(_m, str):
+        _model = _m
+    elif _m is not None:
+        _model = str(getattr(_m, 'model', 'unknown'))
+    else:
+        _model = 'unknown'
     _text_preview = collected_text[:800] + "..." if len(collected_text) > 800 else collected_text
     print(f"\n=== ADK AGENT RESULT (agent={agent.name}) ===")
     print(_jd.dumps({
@@ -1174,34 +1179,18 @@ def _capability_to_model_name(capability_id: str | None) -> str:
 
 async def _run_supervisor_with_fallback(
     supervisor_context: str,
-    cerebras_agent: Agent | None,
     gemini_agent: Agent | None,
     timeout: int,
     max_retries: int,
 ) -> tuple[str, bool, str]:
-    """Run supervisor with Cerebras → Gemini fallback.
+    """Run supervisor with Gemini (native ADK string, not LiteLlm).
 
-    Mirrors _run_router_with_fallback pattern. Returns (text, ok, model_used).
-    If all providers fail, (text="", ok=False, model_used="none") — caller
-    handles best-evidence fallback.
+    Returns (text, ok, model_used).  If all providers fail,
+    (text="", ok=False, model_used="none") — caller handles
+    best-evidence fallback.
     """
-    # Primary: Cerebras
-    if cerebras_agent is not None:
-        logger.info("Trying Supervisor Primary: Cerebras (%s)", settings.supervisor_primary_model)
-        try:
-            text, ok = await _run_agent_safe(
-                cerebras_agent, supervisor_context,
-                timeout=timeout, max_retries_on_rate_limit=max_retries,
-            )
-            if ok and text.strip():
-                return text, True, "cerebras"
-            logger.warning("Supervisor Primary (Cerebras) returned empty")
-        except Exception as exc:
-            logger.warning("Supervisor Primary (Cerebras) FAILED: %s", str(exc).split('\n')[0][:200])
-
-    # Fallback: Gemini
     if gemini_agent is not None:
-        logger.info("Trying Supervisor Fallback: Gemini (%s)", settings.supervisor_fallback_model)
+        logger.info("Trying Supervisor: Gemini (%s)", settings.supervisor_model or "gemini-2.5-flash")
         try:
             text, ok = await _run_agent_safe(
                 gemini_agent, supervisor_context,
@@ -1209,9 +1198,9 @@ async def _run_supervisor_with_fallback(
             )
             if ok and text.strip():
                 return text, True, "gemini"
-            logger.warning("Supervisor Fallback (Gemini) returned empty")
+            logger.warning("Supervisor (Gemini) returned empty")
         except Exception as exc:
-            logger.warning("Supervisor Fallback (Gemini) FAILED: %s", str(exc).split('\n')[0][:200])
+            logger.warning("Supervisor (Gemini) FAILED: %s", str(exc).split('\n')[0][:200])
 
     return "", False, "none"
 
@@ -1265,11 +1254,9 @@ async def _run_analysis_with_fallback(
         "analysis_fb2": settings.fallback2_model,
     }
 
-    # Create supervisor agents: Cerebras (primary) + Gemini (fallback)
-    cerebras_supervisor = create_cerebras_supervisor_agent()
+    # Create supervisor agent: Gemini (native ADK string), fallback text-only agent as last resort
     gemini_supervisor = create_gemini_supervisor_agent()
-    # Keep the legacy agent as a last resort if neither new one is available
-    supervisor_agent = cerebras_supervisor or gemini_supervisor or create_supervisor_agent()
+    supervisor_agent = gemini_supervisor or create_supervisor_agent()
 
     # ── Investigation state ────────────────────────────────────────
     state = InvestigationState()
@@ -1423,9 +1410,10 @@ async def _run_analysis_with_fallback(
         print(supervisor_context)
         print(f"{'='*60}\n")
 
-        # ── Run supervisor with Cerebras → Gemini fallback ────
+        # ── Run supervisor (Gemini) ────
         logger.info("Running supervisor (round %d)...", rounds_completed)
-        model_name = supervisor_agent.model.model if hasattr(supervisor_agent.model, 'model') else 'unknown'
+        _m2 = supervisor_agent.model if hasattr(supervisor_agent, 'model') else None
+        model_name = _m2 if isinstance(_m2, str) else str(getattr(_m2, 'model', 'unknown')) if _m2 is not None else 'unknown'
         print(f"\n=== SUPERVISOR: calling model (round {rounds_completed}) ===")
         print(f"  Model: {model_name}")
         import time as _time
@@ -1434,7 +1422,6 @@ async def _run_analysis_with_fallback(
         try:
             supervisor_text, ok, supervisor_model_used = await _run_supervisor_with_fallback(
                 supervisor_context,
-                cerebras_supervisor,
                 gemini_supervisor,
                 timeout=settings.request_timeout_seconds,
                 max_retries=settings.max_retries_primary,

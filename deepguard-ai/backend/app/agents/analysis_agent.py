@@ -86,20 +86,22 @@ Confidence calibration:
 - Visual + forensic contradict             → 0.25–0.50
 - Insufficient evidence                    → 0.10–0.30
 
-Reference ranges (calibration anchors, not hard thresholds):
-| Metric                     | Authentic range     | Suspicious          |
-|----------------------------|---------------------|---------------------|
-| ELA mean_difference        | 0.05 — 0.50         | > 1.0               |
-| Noise variance             | 100 — 1500          | < 50 or > 3000      |
-| FFT high_freq_ratio        | 0.001 — 0.05        | > 0.10              |
-| DCT coefficient mean       | 0.5 — 5.0           | > 10.0              |
-| Wavelet HH energy          | 0.001 — 0.05        | > 0.10              |
-| JPEG block_boundary_ratio  | 0.3 — 0.7           | < 0.2 or > 0.8      |
-| Compression quality        | 75% — 98%           | < 60% or claims 100%|
-| Edge intensity (Canny)     | 0.01 — 0.10         | < 0.005 or > 0.20   |
+Reference ranges (asymmetric — some metrics only suspicious in one direction):
+| Metric                     | Authentic range     | Suspicious                       |
+|----------------------------|---------------------|----------------------------------|
+| ELA mean_difference        | 0.05 — 0.50         | > 1.0 only (below 0.05 is normal)|
+| Noise variance             | 100 — 1500          | < 50 or > 3000                   |
+| FFT high_freq_ratio        | 0.001 — 0.05        | > 0.10 only (below 0.001 normal) |
+| DCT coefficient mean       | 0.5 — 5.0           | > 10.0 only (below 0.5 normal)   |
+| Wavelet HH energy          | 0.001 — 0.05        | > 0.10 only (below 0.001 normal) |
+| JPEG block_boundary_ratio  | 0.3 — 0.7           | < 0.2 or > 0.8                   |
+| Compression quality        | 75% — 98%           | < 60% or claims 100%             |
+| Edge intensity (Canny)     | 0.01 — 0.10         | < 0.005 or > 0.20                |
 
 Real photo anchor: ELA≈0.19, noise_variance≈470.
-Values outside authentic ranges are strong indicators of manipulation, even if the image looks realistic.
+Only values in the SUSPICIOUS direction are manipulation indicators.
+Values below the authentic floor for one-sided metrics (ELA, FFT, DCT, Wavelet HH)
+are NORMAL, not suspicious — do not flag them.
 
 ---
 
@@ -128,67 +130,7 @@ Output ONLY valid JSON with these exact fields. No extra text, no markdown, no c
 }
 """
 
-FALLBACK_INSTRUCTION = """PRIMARY OBJECTIVE
 
-Maximize forensic correctness.
-
-Never sacrifice correctness for autonomy, speed, confidence, completeness, elegance, or consistency.
-
-An incorrect verdict is the worst possible outcome.
-
-An inconclusive verdict is acceptable.
-
-Never guess.
-
----
-
-MISSION
-
-Find the truth about this image.
-
-You are a digital forensic examiner. Determine whether this image is REAL, FAKE, or INCONCLUSIVE.
-
----
-
-RESPONSIBILITIES
-
-1. Evaluate visual evidence and forensic measurements.
-2. Identify contradictions between visual appearance and forensic data.
-3. Produce a verdict and calibrated confidence.
-
----
-
-FORBIDDEN
-
-- Never guess. If evidence is insufficient, return INCONCLUSIVE.
-- Never rely on visual appearance alone. Forensic evidence always takes priority.
-- Never agree with previous models. Treat every case independently.
-
----
-
-DECISION CRITERIA
-
-- If visual and forensic evidence contradict, flag the conflict and lower confidence.
-- Values outside authentic reference ranges are strong indicators of manipulation.
-
----
-
-OUTPUT CONTRACT
-
-Output ONLY valid JSON:
-
-{
-  "verdict": "real" | "fake" | "inconclusive",
-  "confidence": 0.0-1.0,
-  "analysis_summary": "Brief overall assessment referencing forensic evidence",
-  "visual_observations": ["observation 1", "observation 2"],
-  "forensic_observations": ["forensic finding 1 with value", "forensic finding 2 with value"],
-  "supporting_evidence": ["evidence supporting verdict"],
-  "conflicting_evidence": ["contradictions found, or empty array"],
-  "limitations": "Honest limitations",
-  "recommendation": "Next step"
-}
-"""
 
 
 def create_analysis_agent() -> Agent:
@@ -209,7 +151,7 @@ def create_fallback1_agent() -> Agent:
     return Agent(
         name="analysis_agent",
         model=model,
-        instruction=FALLBACK_INSTRUCTION,
+        instruction=PRIMARY_INSTRUCTION,
         tools=[],
     )
 
@@ -221,6 +163,6 @@ def create_gemini_fallback_agent() -> Agent:
     return Agent(
         name="analysis_agent",
         model=model,
-        instruction=FALLBACK_INSTRUCTION,
+        instruction=PRIMARY_INSTRUCTION,
         tools=[],
     )
