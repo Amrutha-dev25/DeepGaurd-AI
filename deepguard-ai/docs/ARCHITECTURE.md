@@ -142,7 +142,7 @@ pipeline — the next provider in the chain handles it.
 |-------|---------|-----|-----|-----|
 | Router | Groq | NVIDIA Omni | Gemini* | Deterministic |
 | Analysis | Sightengine (conf≥0.8 return, <0.8 enter gate†) | NVIDIA Omni | NVIDIA Nano | Gemini* → inconclusive |
-| Supervisor | Cerebras (gpt-oss-120b) | Gemini 2.5 Flash* | — | — |
+| Supervisor | Cerebras (gemma-4-31b) | Gemini 2.5 Flash* | — | — |
 | Report | Groq | NVIDIA Omni | Gemini* | Deterministic |
 
 \* Gemini fallback is conditional on `ENABLE_GEMINI_FALLBACK=true` + `GOOGLE_API_KEY` set.
@@ -322,11 +322,11 @@ GROQ_API_KEY                                   — Router + Report primary
 
 # Strongly recommended
 PRIMARY_API_KEY — NVIDIA NIM (Analysis fallback + Router/Report fallback)
-CEREBRAS_API_KEY — Supervisor primary (gpt-oss-120b, free tier available, sign up at cloud.cerebras.ai)
+CEREBRAS_API_KEY — Supervisor primary (gemma-4-31b, free tier available, sign up at cloud.cerebras.ai)
 
 # Optional
 GOOGLE_API_KEY                 — Gemini fallback (all 4 agents)
-SUPERVISOR_PRIMARY_MODEL       — Cerebras model override (default: cerebras/gpt-oss-120b)
+SUPERVISOR_PRIMARY_MODEL       — Cerebras model override (default: cerebras/gemma-4-31b)
 SUPERVISOR_FALLBACK_MODEL      — Gemini model for supervisor fallback (default: gemini-2.5-flash)
 ENABLE_GEMINI_FALLBACK         — must be "true" to enable Gemini
 TAVILY_API_KEY                 — Web search tool

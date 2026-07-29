@@ -153,12 +153,24 @@ def main() -> None:
             elapsed = time.perf_counter() - t0
 
             # API response has top-level verdict/confidence,
-            # pipeline.model_used, pipeline.degraded
+            # pipeline.model_used, pipeline.degraded, investigation_trace
             verdict = _format_result(api_resp)
             confidence = api_resp.get("confidence")
             pipeline_info = api_resp.get("pipeline", {})
             model = pipeline_info.get("model_used") or api_resp.get("model_used", "?")
             degraded = pipeline_info.get("degraded", False) or api_resp.get("degraded", False)
+
+            # Investigation trace — supervisor loop details
+            trace = api_resp.get("investigation_trace", {}) or {}
+            rounds_completed = trace.get("rounds_completed", 0)
+            converged = trace.get("converged", False)
+            # Determine final trusted capability/provider
+            evidence_table = trace.get("evidence_table", [])
+            if rounds_completed == 0 or not evidence_table:
+                final_trusted = "sightengine-direct"
+            else:
+                last_entry = evidence_table[-1]
+                final_trusted = last_entry.get("capability", "unknown")
 
             passed = verdict == gt
             results.append(
@@ -170,12 +182,16 @@ def main() -> None:
                     confidence=round(confidence, 4) if confidence is not None else None,
                     model_used=model,
                     degraded=bool(degraded),
+                    rounds=rounds_completed,
+                    final_trusted=final_trusted,
+                    converged=converged,
                     passed=passed,
                     latency_seconds=round(elapsed, 2),
                 )
             )
             status = "PASS" if passed else "FAIL"
-            print(f"{verdict} ({confidence}) [{model}] {elapsed:.1f}s {status}")
+            trace_info = f"rounds={rounds_completed} trusted={final_trusted}"
+            print(f"{verdict} ({confidence}) [{model}] {elapsed:.1f}s {status} ({trace_info})")
 
         except requests.exceptions.Timeout:
             results.append(
@@ -187,6 +203,9 @@ def main() -> None:
                     confidence=None,
                     model_used=None,
                     degraded=None,
+                    rounds=0,
+                    final_trusted="error",
+                    converged=False,
                     passed=False,
                     latency_seconds=None,
                 )
@@ -202,6 +221,9 @@ def main() -> None:
                     confidence=None,
                     model_used=str(exc),
                     degraded=None,
+                    rounds=0,
+                    final_trusted="error",
+                    converged=False,
                     passed=False,
                     latency_seconds=None,
                 )
@@ -296,10 +318,10 @@ def _build_report(results: list[dict], url: str) -> str:
     # per-file table
     lines.append("## Per-File Results\n")
     lines.append(
-        "| # | File | Type | GT | Verdict | Confidence | Model | Degraded | Pass | Latency |"
+        "| # | File | Type | GT | Verdict | Confidence | Model | Rounds | Trusted | Converged | Pass | Latency |"
     )
     lines.append(
-        "|---|------|------|----|---------|------------|-------|----------|------|---------|"
+        "|---|------|------|----|---------|------------|-------|--------|---------|-----------|------|---------|"
     )
     for idx, r in enumerate(results, 1):
         conf_str = f"{r['confidence']:.1%}" if r["confidence"] is not None else "—"
@@ -307,9 +329,12 @@ def _build_report(results: list[dict], url: str) -> str:
         lat_str = f"{r['latency_seconds']}s" if r["latency_seconds"] is not None else "—"
         deg_str = "✓" if r.get("degraded") else ""
         pass_str = "✓" if r["passed"] else "✗"
+        rnd_str = str(r.get("rounds", "?"))
+        tr_str = r.get("final_trusted", "?")
+        cv_str = "✓" if r.get("converged") else "✗"
         lines.append(
             f"| {idx} | {r['filename']} | {r['media_type']} | {r['ground_truth']} "
-            f"| {r['verdict']} | {conf_str} | {model_str} | {deg_str} | {pass_str} | {lat_str} |"
+            f"| {r['verdict']} | {conf_str} | {model_str} | {rnd_str} | {tr_str} | {cv_str} | {pass_str} | {lat_str} |"
         )
 
     lines.append("")
