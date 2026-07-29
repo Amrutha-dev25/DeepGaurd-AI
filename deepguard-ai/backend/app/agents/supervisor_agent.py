@@ -57,7 +57,7 @@ class InvestigationState:
     providers_tried: list[str] = field(default_factory=list)
     evidence_table: list[dict] = field(default_factory=list)
     rounds_completed: int = 0
-    max_rounds: int = 2
+    max_rounds: int = 3
     reasoning_log: list[str] = field(default_factory=list)
     converged: bool = False
     final_verdict: dict[str, Any] | None = None
@@ -347,12 +347,29 @@ def build_supervisor_context(
     parts.append("=== FORENSIC EVIDENCE ===")
     fcx = forensic_context or {}
     _ft = investigation_state.file_type or "image"
-    # Helper: append caveat tag if metric is affected by source type
+    # Compute max image dimension from preprocessing result for resolution caveat
+    _orig_size = (preprocessing_result or {}).get("original_size", "")
+    _max_dim: int | None = None
+    if _orig_size and "x" in str(_orig_size):
+        try:
+            parts_s = str(_orig_size).split("x")
+            _max_dim = max(int(parts_s[0]), int(parts_s[1]))
+        except (ValueError, IndexError):
+            _max_dim = None
+    _HIGH_RES = 3000
+    # Helper: append caveat tag if metric is affected by source type or resolution
     def _caveat_tag(metric_name: str) -> str:
+        tags = []
         if _ft == "video" and metric_name in {
             "noise_variance", "fft_high_freq_ratio", "jpeg_block_boundary",
         }:
-            return " [reduced reliability — video recompression artifact]"
+            tags.append("video recompression artifact")
+        if _max_dim and _max_dim > _HIGH_RES and metric_name in {
+            "noise_variance", "fft_high_freq_ratio", "jpeg_block_boundary",
+        }:
+            tags.append("high-resolution — reference ranges calibrated at lower resolution")
+        if tags:
+            return " [reduced reliability: " + "; ".join(tags) + "]"
         return ""
     if "ela" in fcx:
         ela = fcx["ela"]

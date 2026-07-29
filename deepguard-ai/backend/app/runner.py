@@ -636,9 +636,10 @@ def _extract_key_frames(file_path: str, num_frames: int = 5) -> list[bytes]:
 # ── Metric reliability caveats ────────────────────────────────────────
 
 _VIDEO_METRICS_AFFECTED = {"noise_variance", "fft_high_freq_ratio", "jpeg_block_boundary"}
+_HIGH_RES_THRESHOLD = 3000  # pixels on longest side
 
 
-def _metric_caveat(metric_name: str, file_type: str) -> str | None:
+def _metric_caveat(metric_name: str, file_type: str, max_dim: int | None = None) -> str | None:
     """Returns a labeled reliability caveat for a metric, or None if none applies.
 
     Facts only — does not decide anything for the model. Passes the
@@ -646,6 +647,8 @@ def _metric_caveat(metric_name: str, file_type: str) -> str | None:
     """
     if file_type == "video" and metric_name in _VIDEO_METRICS_AFFECTED:
         return "reduced reliability — video frame recompression artifacts, not necessarily manipulation"
+    if max_dim and max_dim > _HIGH_RES_THRESHOLD and metric_name in _VIDEO_METRICS_AFFECTED:
+        return "reduced reliability — reference ranges calibrated at lower resolution; high-resolution image alters noise/FFT/block statistics independently"
     return None
 
 
@@ -655,6 +658,7 @@ def _format_forensic_evidence(
     forensic_context: dict[str, Any],
     preprocessing: dict[str, Any],
     file_type: str = "image",
+    max_dim: int | None = None,
 ) -> str:
     """Convert raw forensic/preprocessing JSON into structured evidence text."""
     lines: list[str] = []
@@ -678,7 +682,7 @@ def _format_forensic_evidence(
     fft = forensic_context.get("fft", {})
     fft_val = fft.get("high_freq_ratio")
     if fft_val is not None:
-        caveat = _metric_caveat("fft_high_freq_ratio", file_type)
+        caveat = _metric_caveat("fft_high_freq_ratio", file_type, max_dim)
         tag = f" [{caveat}]" if caveat else ""
         lines.append(f"FFT HIGH-FREQUENCY RATIO: {fft_val:.4f}{tag}")
         lines.append(f"FFT EVIDENCE: {fft.get('evidence', 'N/A')}")
@@ -714,7 +718,7 @@ def _format_forensic_evidence(
     noise = forensic_context.get("noise", {})
     noise_val = noise.get("noise_variance")
     if noise_val is not None:
-        caveat = _metric_caveat("noise_variance", file_type)
+        caveat = _metric_caveat("noise_variance", file_type, max_dim)
         tag = f" [{caveat}]" if caveat else ""
         lines.append(f"NOISE VARIANCE (Laplacian): {noise_val:.2f}{tag}")
         lines.append(f"NOISE EVIDENCE: {noise.get('evidence', 'N/A')}")
@@ -726,7 +730,7 @@ def _format_forensic_evidence(
     jpeg = forensic_context.get("jpeg_artifacts", {})
     jpeg_val = jpeg.get("block_boundary_ratio")
     if jpeg_val is not None:
-        caveat = _metric_caveat("jpeg_block_boundary", file_type)
+        caveat = _metric_caveat("jpeg_block_boundary", file_type, max_dim)
         tag = f" [{caveat}]" if caveat else ""
         lines.append(f"JPEG BLOCK-BOUNDARY RATIO: {jpeg_val}{tag}")
         lines.append(f"JPEG SUMMARY: {jpeg.get('summary', 'N/A')}")
@@ -1397,7 +1401,7 @@ async def _run_analysis_with_fallback(
             return sightengine_verdict, "sightengine", False, _build_investigation_trace(state)
 
     # ── Supervisor loop ───────────────────────────────────────────
-    max_rounds = 2
+    max_rounds = 3
     convergence_status: str | None = None
 
     for rounds_completed in range(1, max_rounds + 1):
@@ -1961,9 +1965,12 @@ async def run_pipeline(
 
     # ── Stage: Analysis Agent (with fallback chain) ──────────────
     _file_type = routing.get("file_type", "image")
+    _img_w = routing.get("width")
+    _img_h = routing.get("height")
+    _max_dim = max(_img_w, _img_h) if (_img_w and _img_h) else None
     stage_start = time.perf_counter()
     forensic_evidence_block = _format_forensic_evidence(
-        secured_context, preprocessing_result, file_type=_file_type,
+        secured_context, preprocessing_result, file_type=_file_type, max_dim=_max_dim,
     )
     analysis_prompt = (
         f"Analyze this image and the forensic evidence below to determine "
@@ -1971,12 +1978,17 @@ async def run_pipeline(
         f"=== ROUTER SUMMARY ===\n{json.dumps(routing, indent=2)}\n\n"
         f"{forensic_evidence_block}\n"
         f"=== REFERENCE RANGES (empirically calibrated) ===\n"
-        f"Use these to interpret forensic measurements:\n"
-        f"  ELA mean_difference:     authentic 0.05–0.50, suspicious >1.0\n"
+        f"Use these to interpret forensic measurements. Important: these are\n"
+        f"asymmetric — some metrics are only suspicious in one direction.\n"
+        f"  ELA mean_difference:     authentic 0.05–0.50, suspicious >1.0 only\n"
+        f"                           (below 0.05 is normal, NOT suspicious)\n"
         f"  Noise variance:          authentic 100–1500, suspicious <50 or >3000\n"
-        f"  FFT high_freq_ratio:     authentic 0.001–0.05, suspicious >0.10\n"
-        f"  DCT coefficient mean:    authentic 0.5–5.0, suspicious >10.0\n"
-        f"  Wavelet HH energy:       authentic 0.001–0.05, suspicious >0.10\n"
+        f"  FFT high_freq_ratio:     authentic 0.001–0.05, suspicious >0.10 only\n"
+        f"                           (below 0.001 is normal, NOT suspicious)\n"
+        f"  DCT coefficient mean:    authentic 0.5–5.0, suspicious >10.0 only\n"
+        f"                           (below 0.5 is normal, NOT suspicious)\n"
+        f"  Wavelet HH energy:       authentic 0.001–0.05, suspicious >0.10 only\n"
+        f"                           (below 0.001 is normal, NOT suspicious)\n"
         f"  JPEG block_boundary:     authentic 0.3–0.7, suspicious <0.2 or >0.8\n"
         f"  Compression quality:     authentic 75–98%, suspicious <60% or '100%'\n"
         f"  Edge intensity (Canny):  authentic 0.01–0.10, suspicious <0.005 or >0.20\n"
@@ -1992,9 +2004,13 @@ async def run_pipeline(
         f"3. Compare each forensic value against the reference ranges above.\n"
         f"4. Identify any contradictions between visual appearance and "
         f"forensic measurements.\n"
-        f"5. If they disagree, the forensic evidence should be weighted more heavily.\n"
-        f"6. Values OUTSIDE the authentic ranges are strong indicators of manipulation, "
-        f"even if the image looks realistic.\n"
+        f"5. If they disagree, weight by reliability: metrics tagged [reduced reliability]\n"
+        f"   carry LESS weight than visual observations. Untagged forensic metrics carry\n"
+        f"   MORE weight than visual observations. Do not blindly favor forensics — check\n"
+        f"   each metric's reliability tag first.\n"
+        f"6. Only values in the SUSPICIOUS direction (listed after 'suspicious' in each range)\n"
+        f"   are manipulation indicators. Values below the authentic floor for one-sided\n"
+        f"   metrics (ELA, FFT, DCT, Wavelet) are normal, not suspicious — do not flag them.\n"
         f"7. Output your verdict as JSON using the required schema."
     )
     # === STAGE 3: ANALYSIS PROMPT (fully rendered) ===
