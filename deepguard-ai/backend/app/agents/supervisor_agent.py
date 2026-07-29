@@ -330,6 +330,10 @@ def build_supervisor_context(
             parts.append("Providers disagree on direction (some say real, some say fake). "
                          "This is a genuine split — bias toward INCONCLUSIVE_STOP unless "
                          "an untried capability could plausibly resolve the disagreement.")
+        elif convergence_status == "SINGLE_OPINION":
+            parts.append("Only one directional verdict exists; the rest abstained or returned "
+                         "inconclusive. This is NOT convergence — consult another capability "
+                         "to see whether the single directional opinion is corroborated.")
         elif convergence_status == "PARTIAL":
             parts.append("Some evidence is inconclusive or mixed. "
                          "Consider whether an untried capability could clarify.")
@@ -342,21 +346,32 @@ def build_supervisor_context(
 
     parts.append("=== FORENSIC EVIDENCE ===")
     fcx = forensic_context or {}
+    _ft = investigation_state.file_type or "image"
+    # Helper: append caveat tag if metric is affected by source type
+    def _caveat_tag(metric_name: str) -> str:
+        if _ft == "video" and metric_name in {
+            "noise_variance", "fft_high_freq_ratio", "jpeg_block_boundary",
+        }:
+            return " [reduced reliability — video recompression artifact]"
+        return ""
     if "ela" in fcx:
         ela = fcx["ela"]
         parts.append(f"ELA mean_difference: {ela.get('mean_difference', 'N/A')}")
     if "noise" in fcx:
         noise = fcx["noise"]
-        parts.append(f"Noise variance: {noise.get('noise_variance', 'N/A')}")
+        nv = noise.get('noise_variance', 'N/A')
+        parts.append(f"Noise variance: {nv}{_caveat_tag('noise_variance')}")
     if "fft" in fcx:
         fft = fcx["fft"]
-        parts.append(f"FFT high_freq_ratio: {fft.get('high_freq_ratio', 'N/A')}")
+        fv = fft.get('high_freq_ratio', 'N/A')
+        parts.append(f"FFT high_freq_ratio: {fv}{_caveat_tag('fft_high_freq_ratio')}")
     if "compression" in fcx:
         comp = fcx["compression"]
         parts.append(f"Compression quality: {comp.get('estimated_quality', 'N/A')}%")
     if "jpeg_artifacts" in fcx:
         jpeg = fcx["jpeg_artifacts"]
-        parts.append(f"JPEG block_boundary_ratio: {jpeg.get('block_boundary_ratio', 'N/A')}")
+        jv = jpeg.get('block_boundary_ratio', 'N/A')
+        parts.append(f"JPEG block_boundary_ratio: {jv}{_caveat_tag('jpeg_block_boundary')}")
     if "exif" in fcx:
         exif = fcx["exif"]
         parts.append(f"EXIF tag_count: {exif.get('tag_count', 'N/A')}")
@@ -399,14 +414,32 @@ def build_supervisor_context(
 
 
 def _compute_evidence_direction(evidence_table: list[dict]) -> str:
-    """Summarise the overall evidence direction for the convergence check."""
+    """Summarise the overall evidence direction for the convergence check.
+
+    Only directional verdicts (real/fake) are counted. Inconclusive or
+    abstaining entries are excluded from agreement calculations — they
+    are not evidence of agreement.
+    """
     from collections import Counter
-    clear = [e for e in evidence_table if e.get("verdict") in ("real", "fake")]
-    if not clear:
+    directional = [e for e in evidence_table if e.get("verdict") in ("real", "fake")]
+    inconclusive_count = sum(1 for e in evidence_table if e.get("verdict") == "inconclusive")
+
+    if not directional:
+        if inconclusive_count > 0:
+            return f"no directional verdicts — {inconclusive_count} provider(s) returned inconclusive"
         return "no clear direction yet"
-    verdicts = Counter(e["verdict"] for e in clear)
-    if len(set(clear_entry["verdict"] for clear_entry in clear)) == 1:
-        return f"all consulted providers agree: {clear[0]['verdict']}"
+
+    if len(directional) == 1:
+        d = directional[0]
+        extra = f" ({inconclusive_count} provider(s) abstained as inconclusive)" if inconclusive_count else ""
+        return f"1 directional opinion: {d['verdict']} (conf={d.get('confidence', 'N/A')}){extra} — single opinion, not convergence"
+
+    verdicts = Counter(e["verdict"] for e in directional)
+    if len(set(e["verdict"] for e in directional)) == 1:
+        total_participating = len(directional) + inconclusive_count
+        return (f"all {len(directional)} directional provider(s) agree: {directional[0]['verdict']}"
+                f" ({inconclusive_count} abstained as inconclusive of {total_participating} total)" if inconclusive_count
+                else f"all {len(directional)} provider(s) agree: {directional[0]['verdict']}")
     # Split
     majority = verdicts.most_common(1)[0][0]
     minority = "fake" if majority == "real" else "real"

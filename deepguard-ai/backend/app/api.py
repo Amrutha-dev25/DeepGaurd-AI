@@ -72,6 +72,10 @@ def _validate_api_keys():
     logger.info("Report Fallback 2: Gemini (%s) — %s", settings.report_fallback1_model,
                  "ENABLED" if settings.enable_gemini_fallback else "DISABLED (set ENABLE_GEMINI_FALLBACK=true)")
     logger.info("Report Fallback 3: Deterministic report generator (last resort)")
+    logger.info("Supervisor Primary: Cerebras (%s) — %s", settings.supervisor_primary_model,
+                 "ENABLED" if settings.cerebras_api_key else "DISABLED (set CEREBRAS_API_KEY)")
+    logger.info("Supervisor Fallback: Gemini (%s) — %s", settings.supervisor_fallback_model,
+                 "ENABLED" if settings.enable_gemini_fallback and settings.google_api_key else "DISABLED")
     logger.info("Gemini Fallback Toggle: %s", "ENABLED" if settings.enable_gemini_fallback else "DISABLED")
 
 

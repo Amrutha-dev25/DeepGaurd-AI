@@ -633,11 +633,28 @@ def _extract_key_frames(file_path: str, num_frames: int = 5) -> list[bytes]:
     return frames
 
 
+# ── Metric reliability caveats ────────────────────────────────────────
+
+_VIDEO_METRICS_AFFECTED = {"noise_variance", "fft_high_freq_ratio", "jpeg_block_boundary"}
+
+
+def _metric_caveat(metric_name: str, file_type: str) -> str | None:
+    """Returns a labeled reliability caveat for a metric, or None if none applies.
+
+    Facts only — does not decide anything for the model. Passes the
+    fact-vs-decision test from the supervisor spec.
+    """
+    if file_type == "video" and metric_name in _VIDEO_METRICS_AFFECTED:
+        return "reduced reliability — video frame recompression artifacts, not necessarily manipulation"
+    return None
+
+
 # ── Format forensic evidence for model consumption ──────────────────────
 
 def _format_forensic_evidence(
     forensic_context: dict[str, Any],
     preprocessing: dict[str, Any],
+    file_type: str = "image",
 ) -> str:
     """Convert raw forensic/preprocessing JSON into structured evidence text."""
     lines: list[str] = []
@@ -648,16 +665,25 @@ def _format_forensic_evidence(
     if ela.get("mean_difference") is not None:
         lines.append(f"ELA MEAN DIFFERENCE: {ela['mean_difference']:.4f}")
         lines.append(f"ELA SUMMARY: {ela.get('summary', 'N/A')}")
+    else:
+        lines.append("ELA MEAN DIFFERENCE: unavailable — computation failed or not applicable")
     pp_ela = preprocessing.get("ela_score")
     if pp_ela is not None:
         lines.append(f"ELA SCORE (pipeline): {pp_ela:.4f}")
+    else:
+        lines.append("ELA SCORE (pipeline): unavailable")
     lines.append("")
 
     # ── FFT ──────────────────────────────────────────────────────────
     fft = forensic_context.get("fft", {})
-    if fft.get("high_freq_ratio") is not None:
-        lines.append(f"FFT HIGH-FREQUENCY RATIO: {fft['high_freq_ratio']:.4f}")
+    fft_val = fft.get("high_freq_ratio")
+    if fft_val is not None:
+        caveat = _metric_caveat("fft_high_freq_ratio", file_type)
+        tag = f" [{caveat}]" if caveat else ""
+        lines.append(f"FFT HIGH-FREQUENCY RATIO: {fft_val:.4f}{tag}")
         lines.append(f"FFT EVIDENCE: {fft.get('evidence', 'N/A')}")
+    else:
+        lines.append("FFT HIGH-FREQUENCY RATIO: unavailable")
     pp_fft = preprocessing.get("fft_mean")
     if pp_fft is not None:
         lines.append(f"FFT MEAN (pipeline): {pp_fft:.2f}")
@@ -667,50 +693,72 @@ def _format_forensic_evidence(
     pp_dct = preprocessing.get("dct_mean")
     if pp_dct is not None:
         lines.append(f"DCT COEFFICIENT MEAN: {pp_dct:.4f}")
+    else:
+        lines.append("DCT COEFFICIENT MEAN: unavailable — computation failed or not applicable")
     lines.append("")
 
     # ── Wavelet ──────────────────────────────────────────────────────
     wavelet = preprocessing.get("wavelet", {})
-    if wavelet:
+    has_wavelet = any(wavelet.get(b) is not None for b in ("LL", "LH", "HL", "HH"))
+    if has_wavelet:
         lines.append("WAVELET ENERGY (Haar decomposition):")
         for band in ("LL", "LH", "HL", "HH"):
             val = wavelet.get(band)
             if val is not None:
                 lines.append(f"  {band}: {val:.4f}")
+    else:
+        lines.append("WAVELET ENERGY: unavailable — computation failed or not applicable")
     lines.append("")
 
     # ── Noise ────────────────────────────────────────────────────────
     noise = forensic_context.get("noise", {})
-    if noise.get("noise_variance") is not None:
-        lines.append(f"NOISE VARIANCE (Laplacian): {noise['noise_variance']:.2f}")
+    noise_val = noise.get("noise_variance")
+    if noise_val is not None:
+        caveat = _metric_caveat("noise_variance", file_type)
+        tag = f" [{caveat}]" if caveat else ""
+        lines.append(f"NOISE VARIANCE (Laplacian): {noise_val:.2f}{tag}")
         lines.append(f"NOISE EVIDENCE: {noise.get('evidence', 'N/A')}")
+    else:
+        lines.append("NOISE VARIANCE: unavailable")
     lines.append("")
 
     # ── JPEG / Compression ───────────────────────────────────────────
     jpeg = forensic_context.get("jpeg_artifacts", {})
-    if jpeg:
-        lines.append(f"JPEG BLOCK-BOUNDARY RATIO: {jpeg.get('block_boundary_ratio', 'N/A')}")
+    jpeg_val = jpeg.get("block_boundary_ratio")
+    if jpeg_val is not None:
+        caveat = _metric_caveat("jpeg_block_boundary", file_type)
+        tag = f" [{caveat}]" if caveat else ""
+        lines.append(f"JPEG BLOCK-BOUNDARY RATIO: {jpeg_val}{tag}")
         lines.append(f"JPEG SUMMARY: {jpeg.get('summary', 'N/A')}")
+    else:
+        lines.append("JPEG BLOCK-BOUNDARY RATIO: unavailable")
     comp = forensic_context.get("compression", {})
     if comp.get("estimated_quality") is not None:
         lines.append(f"COMPRESSION ESTIMATED QUALITY: {comp['estimated_quality']}%")
         lines.append(f"COMPRESSION EVIDENCE: {comp.get('evidence', 'N/A')}")
+    else:
+        lines.append("COMPRESSION ESTIMATED QUALITY: unavailable")
     lines.append("")
 
     # ── Clone Detection ──────────────────────────────────────────────
     clones = forensic_context.get("clones", {})
     if clones:
         lines.append(f"CLONE DETECTION: {clones.get('summary', clones.get('evidence', 'N/A'))}")
+    else:
+        lines.append("CLONE DETECTION: unavailable")
     lines.append("")
 
     # ── Edge / Structural ────────────────────────────────────────────
     edges = preprocessing.get("edge_intensity", {})
-    if edges:
+    has_edges = any(edges.get(k) is not None for k in ("canny", "sobel", "laplacian"))
+    if has_edges:
         lines.append("EDGE INTENSITY:")
         for k in ("canny", "sobel", "laplacian"):
             val = edges.get(k)
             if val is not None:
                 lines.append(f"  {k.upper()}: {val:.4f}")
+    else:
+        lines.append("EDGE INTENSITY: unavailable — computation failed or not applicable")
     lines.append("")
 
     # ── Face Detection ───────────────────────────────────────────────
@@ -718,6 +766,8 @@ def _format_forensic_evidence(
     if faces.get("face_count") is not None:
         lines.append(f"FACE DETECTION: {faces['face_count']} face(s) detected")
         lines.append(f"FACE EVIDENCE: {faces.get('evidence', 'N/A')}")
+    else:
+        lines.append("FACE DETECTION: unavailable")
     lines.append("")
 
     # ── Metadata / EXIF ──────────────────────────────────────────────
@@ -734,6 +784,8 @@ def _format_forensic_evidence(
         ai_tools = exif.get("ai_generation_tools", [])
         if ai_tools:
             lines.append(f"  AI generation tools detected: {', '.join(ai_tools)}")
+    else:
+        lines.append("EXIF / METADATA: unavailable")
     pp_meta = preprocessing.get("metadata", {})
     if pp_meta:
         if pp_meta.get("camera"):
@@ -758,6 +810,8 @@ def _format_forensic_evidence(
     frames_info = forensic_context.get("frames", {})
     if frames_info:
         lines.append(f"FRAME ANALYSIS: {frames_info.get('evidence', 'N/A')}")
+    else:
+        lines.append("FRAME ANALYSIS: unavailable")
     lines.append("")
 
     return "\n".join(lines)
@@ -1058,17 +1112,19 @@ def _build_verdict_from_entry(entry: dict) -> dict:
 def _check_convergence(state: "InvestigationState") -> str | None:
     """Check whether multiple evidence entries agree or disagree.
 
-    Returns 'AGREE', 'SPLIT', 'PARTIAL', or None (insufficient data).
+    Only directional (real/fake) verdicts are counted. Inconclusive entries
+    are excluded from agreement — they represent abstention, not evidence.
+
+    Returns 'AGREE', 'SINGLE_OPINION', 'SPLIT', 'PARTIAL', or None.
     Does NOT return CONCLUDE/INCONCLUSIVE_STOP — that is the supervisor's job.
     Needs at least 2 entries to produce a signal.
     """
     if len(state.evidence_table) < 2:
         return None
-    directions: set[str] = set()
-    for entry in state.evidence_table:
-        v = entry.get("verdict", "")
-        if v in ("fake", "real"):
-            directions.add(v)
+    directional = [e for e in state.evidence_table if e.get("verdict") in ("fake", "real")]
+    if len(directional) < 2:
+        return "SINGLE_OPINION"
+    directions = set(e["verdict"] for e in directional)
     if len(directions) == 1:
         return "AGREE"
     if len(directions) >= 2:
@@ -1904,8 +1960,11 @@ async def run_pipeline(
         )
 
     # ── Stage: Analysis Agent (with fallback chain) ──────────────
+    _file_type = routing.get("file_type", "image")
     stage_start = time.perf_counter()
-    forensic_evidence_block = _format_forensic_evidence(secured_context, preprocessing_result)
+    forensic_evidence_block = _format_forensic_evidence(
+        secured_context, preprocessing_result, file_type=_file_type,
+    )
     analysis_prompt = (
         f"Analyze this image and the forensic evidence below to determine "
         f"if it is REAL, FAKE, or INCONCLUSIVE.\n\n"
@@ -1922,17 +1981,10 @@ async def run_pipeline(
         f"  Compression quality:     authentic 75–98%, suspicious <60% or '100%'\n"
         f"  Edge intensity (Canny):  authentic 0.01–0.10, suspicious <0.005 or >0.20\n"
         f"  Real photo anchor: ELA≈0.19, noise_variance≈470\n\n"
-        f"=== VIDEO NOTE ===\n"
-        f"The reference ranges above were empirically calibrated primarily on static\n"
-        f"image data. If ROUTER SUMMARY indicates file_type is \"video\", the source\n"
-        f"frame was extracted and re-encoded from video (via cv2.imwrite), which\n"
-        f"independently introduces noise-reduction and compression artifacts unrelated\n"
-        f"to manipulation. When file_type is video, treat borderline deviations in\n"
-        f"noise variance, FFT high-frequency ratio, and JPEG block-boundary ratio as\n"
-        f"WEAKER evidence than the same deviations on a native image — do not flag\n"
-        f"these alone as strong manipulation evidence for video sources unless the\n"
-        f"deviation is extreme (more than 3× outside the stated range) OR corroborated\n"
-        f"by ELA or DCT anomalies as well.\n\n"
+        f"Note: Some metrics above may include a reliability tag (e.g.\n"
+        f"'[reduced reliability — ...]') indicating conditions that affect\n"
+        f"measurement confidence for that specific metric. Treat tagged\n"
+        f"metrics as weaker evidence than untagged ones.\n\n"
         f"=== INSTRUCTIONS ===\n"
         f"1. Examine the image visually for manipulation artifacts.\n"
         f"2. Review the FORENSIC EVIDENCE above — every value was computed "
@@ -1958,7 +2010,7 @@ async def run_pipeline(
         analysis_frames=analysis_frames,
         forensic_context=secured_context,
         preprocessing_result=preprocessing_result,
-        file_type=routing.get("file_type", "image"),
+        file_type=_file_type,
     )
 
     analysis_latency = time.perf_counter() - stage_start
